@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+:root {
+  /* Brand blue scale (built around the existing #005293) */
+  --brand-50: #eaf2fa;
+  --brand-100: #d3e6f5;
+  --brand-200: #a7cdec;
+  --brand-500: #0078b4;
+  --brand-600: #005293;
+  --brand-700: #003f70;
+  --brand: #005293;
+  --brand-light: #0078b4;
+
+  /* Neutral scale */
+  --surface: #ffffff;
+  --surface-muted: #f4f6f9;
+  --border: #dfe4ea;
+  --border-strong: #c3cbd6;
+  --text: #1f2937;
+  --text-muted: #5b6472;
+
+  /* Fixed status colors */
+  --status-info-bg: #e8f1fb;
+  --status-info-fg: #1c5d99;
+  --status-success-bg: #e6f6ea;
+  --status-success-fg: #1c7a37;
+  --status-warning-bg: #fdf3e3;
+  --status-warning-fg: #96650b;
+  --status-danger-bg: #fbeaea;
+  --status-danger-fg: #b3261e;
+  --status-neutral-bg: #eef1f5;
+  --status-neutral-fg: #4b5563;
+}
+
+body {
+  margin: 0;
+  font-family: "Padauk", "Noto Sans Myanmar", system-ui, sans-serif;
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+/*
+ * These base component classes live in Tailwind's "components" cascade layer
+ * (lower priority than the "utilities" layer) so a one-off utility class on an
+ * element — e.g. `className="input w-16"` — correctly overrides them, the way
+ * Tailwind is meant to work. Without this @layer wrapper, an unlayered rule
+ * like a plain `.input { width: 100% }` always beats ANY utility class
+ * regardless of source order (that's how CSS cascade layers work), silently
+ * defeating things like `w-16`/`max-w-*` and forcing `!w-16`-style
+ * `!important` hacks everywhere instead.
+ */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-4 py-2.5 text-sm font-semibold transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs rounded;
+  }
+
+  .btn-primary {
+    @apply text-white;
+    background: var(--brand-600);
+    border: 1px solid var(--brand-600);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--brand-700);
+  }
+
+  .btn-secondary {
+    @apply bg-white text-slate-800;
+    border: 1px solid var(--border-strong);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--surface-muted);
+  }
+
+  .btn-outline-light {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition
+      border border-white/30 bg-white/10 text-white hover:bg-white/20;
+  }
+
+  .card {
+    @apply bg-white rounded-lg p-4;
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  }
+
+  .input {
+    @apply w-full rounded-md px-3 py-2 text-sm bg-white focus:outline-none;
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+  }
+  .input:focus {
+    border-color: var(--brand-500);
+    box-shadow: 0 0 0 3px var(--brand-50);
+  }
+
+  /* For a number input placed next to its own +/- stepper buttons — the native
+     spinner arrows are redundant there and, in a narrow box, squeeze the digit
+     itself out of view. Arrow-key stepping on the input still works with the
+     visual spinner hidden. */
+  .no-spinner::-webkit-inner-spin-button,
+  .no-spinner::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinner {
+    -moz-appearance: textfield;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+
+  .alert {
+    @apply flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm;
+  }
+  .alert-info { background: var(--status-info-bg); border-color: var(--brand-100); color: var(--status-info-fg); }
+  .alert-success { background: var(--status-success-bg); border-color: #bfe8c9; color: var(--status-success-fg); }
+  .alert-warning { background: var(--status-warning-bg); border-color: #f6dfa8; color: var(--status-warning-fg); }
+  .alert-danger { background: var(--status-danger-bg); border-color: #f3c6c4; color: var(--status-danger-fg); }
+}
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+}

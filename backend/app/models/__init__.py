@@ -1,0 +1,12 @@
+from app.db.session import Base  # noqa: F401
+from app.models import accounting  # noqa: F401
+from app.models import ancillary  # noqa: F401
+from app.models import billing  # noqa: F401
+from app.models import catalog  # noqa: F401
+from app.models import clinical  # noqa: F401
+from app.models import comms  # noqa: F401
+from app.models import inventory  # noqa: F401
+from app.models import ipd  # noqa: F401
+from app.models import org  # noqa: F401
+from app.models import patients  # noqa: F401
+from app.models import users  # noqa: F401
