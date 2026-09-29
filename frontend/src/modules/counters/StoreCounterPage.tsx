@@ -4,17 +4,31 @@ import { useToast } from '../../lib/toast'
 import Tabs from '../../components/Tabs'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
+import Alert from '../../components/Alert'
 import Modal from '../../components/Modal'
+import ToggleGroup from '../../components/ToggleGroup'
 import { formatMoney } from '../../lib/format'
+import LabReagentTestPicker, { type LabTestLink, type LabTestOption } from '../../components/LabReagentTestPicker'
+
+type StoreTab = 'stock' | 'alerts' | 'receive' | 'suppliers' | 'wastage'
+type StockDept = 'pharmacy' | 'lab' | 'xray' | 'usg'
+
+const STOCK_DEPTS: { value: StockDept; label: string }[] = [
+  { value: 'pharmacy', label: 'Pharmacy' },
+  { value: 'lab', label: 'Lab' },
+  { value: 'xray', label: 'X-ray' },
+  { value: 'usg', label: 'USG' },
+]
 
 const emptyReceiveForm = { item_id: '', qty: '', unit_cost: '', batch_no: '', expiry_date: '' }
 const emptyWastageForm = { batch_id: '', qty: '', reason: 'damaged' }
 const emptySupplierForm = { name: '', phone: '' }
 const emptyMedForm = { name: '', sku: '', price: '', cost: '', min_stock: '10' }
+const emptyAlerts = { low_stock: [] as any[], near_expiry: [] as any[], expired: [] as any[] }
 
 export default function StoreCounterPage() {
   const toast = useToast()
-  const [tab, setTab] = useState<'stock' | 'receive' | 'suppliers' | 'wastage'>('stock')
+  const [tab, setTab] = useState<StoreTab>('stock')
   const [items, setItems] = useState<any[]>([])
   const [warehouses, setWarehouses] = useState<any[]>([])
   const [warehouseId, setWarehouseId] = useState('')
@@ -29,24 +43,44 @@ export default function StoreCounterPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [medForm, setMedForm] = useState(emptyMedForm)
   const [editItem, setEditItem] = useState<any>(null)
+  const [alerts, setAlerts] = useState(emptyAlerts)
+  const [dept, setDept] = useState<StockDept>('pharmacy')
+  const [labBillableTests, setLabBillableTests] = useState<LabTestOption[]>([])
+  const [labTestLinks, setLabTestLinks] = useState<LabTestLink[]>([])
+  const [editLabTestLinks, setEditLabTestLinks] = useState<LabTestLink[]>([])
 
   const loadItems = useCallback(async () => {
     try {
-      const { data } = await api.get('/inventory/items')
+      const params: Record<string, string | number> = { department: dept }
+      if (warehouseId) params.warehouse_id = Number(warehouseId)
+      const { data } = await api.get('/inventory/items', { params })
       setItems(data)
     } catch (e) {
       toast.error(getApiError(e))
     }
-  }, [toast])
+  }, [toast, warehouseId, dept])
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      const params: Record<string, string | number> = { department: dept }
+      if (warehouseId) params.warehouse_id = Number(warehouseId)
+      const { data } = await api.get('/inventory/alerts', { params })
+      setAlerts(data)
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }, [toast, warehouseId, dept])
 
   const loadBatches = useCallback(async () => {
     try {
-      const { data } = await api.get('/inventory/batches')
+      const params: Record<string, string | number> = { department: dept }
+      if (warehouseId) params.warehouse_id = Number(warehouseId)
+      const { data } = await api.get('/inventory/batches', { params })
       setBatches(data)
     } catch (e) {
       toast.error(getApiError(e))
     }
-  }, [toast])
+  }, [toast, warehouseId, dept])
 
   const loadSuppliers = useCallback(async () => {
     try {
@@ -66,19 +100,50 @@ export default function StoreCounterPage() {
     }
   }, [toast])
 
+  const loadLabBillableTests = useCallback(async () => {
+    try {
+      const { data } = await api.get('/inventory/lab-tests')
+      setLabBillableTests(data)
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }, [toast])
+
   useEffect(() => {
-    void loadItems()
+    if (dept === 'lab') void loadLabBillableTests()
+  }, [dept, loadLabBillableTests])
+
+  useEffect(() => {
     api.get('/inventory/warehouses').then((r) => {
       setWarehouses(r.data)
       if (r.data[0]) setWarehouseId(String(r.data[0].id))
     }).catch((e) => toast.error(getApiError(e)))
-  }, [loadItems, toast])
+  }, [toast])
 
   useEffect(() => {
+    if (!warehouseId) return
+    void loadItems()
+    void loadAlerts()
+  }, [warehouseId, loadItems, loadAlerts])
+
+  // Pull-only alert refresh — badge count stays current without push notifications.
+  useEffect(() => {
+    if (!warehouseId) return
+    const id = setInterval(() => { void loadAlerts() }, 30000)
+    return () => clearInterval(id)
+  }, [warehouseId, loadAlerts])
+
+  useEffect(() => {
+    if (tab === 'alerts') void loadAlerts()
     if (tab === 'receive') void loadBatches()
     if (tab === 'suppliers') void loadSuppliers()
     if (tab === 'wastage') { void loadBatches(); void loadWastage() }
-  }, [tab, loadBatches, loadSuppliers, loadWastage])
+  }, [tab, loadAlerts, loadBatches, loadSuppliers, loadWastage])
+
+  const alertCount =
+    (alerts.low_stock?.length || 0) +
+    (alerts.near_expiry?.length || 0) +
+    (alerts.expired?.length || 0)
 
   const stockRows = items.filter((row) => {
     const q = stockQuery.trim().toLowerCase()
@@ -102,6 +167,7 @@ export default function StoreCounterPage() {
       setReceiveForm(emptyReceiveForm)
       await loadItems()
       await loadBatches()
+      await loadAlerts()
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -134,11 +200,15 @@ export default function StoreCounterPage() {
         price: Number(medForm.price) || 0,
         cost: Number(medForm.cost) || 0,
         min_stock: Number(medForm.min_stock) || 10,
+        department: dept,
+        lab_tests: dept === 'lab' ? labTestLinks : [],
       })
       toast.success('Item added')
       setMedForm(emptyMedForm)
+      setLabTestLinks([])
       setAddOpen(false)
       await loadItems()
+      await loadAlerts()
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -150,15 +220,18 @@ export default function StoreCounterPage() {
     if (!editItem) return
     setBusy(true)
     try {
-      await api.patch(`/inventory/medicines/${editItem.id}`, {
+      const patch: Record<string, unknown> = {
         name: editItem.name,
-        price: Number(editItem.price),
         cost: Number(editItem.cost),
         min_stock: Number(editItem.min_stock),
-      })
+      }
+      if (dept !== 'lab') patch.price = Number(editItem.price) || 0
+      if (dept === 'lab') patch.lab_tests = editLabTestLinks
+      await api.patch(`/inventory/medicines/${editItem.id}`, patch)
       toast.success('Updated')
       setEditItem(null)
       await loadItems()
+      await loadAlerts()
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -178,6 +251,7 @@ export default function StoreCounterPage() {
       toast.success('Wastage submitted')
       setWastageForm(emptyWastageForm)
       await loadWastage()
+      await loadAlerts()
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -185,26 +259,54 @@ export default function StoreCounterPage() {
     }
   }
 
+  const deptLabel = STOCK_DEPTS.find((d) => d.value === dept)?.label || dept
+
   return (
     <div>
+      <ToggleGroup
+        className="mb-4"
+        options={STOCK_DEPTS}
+        value={dept}
+        onChange={(v) => {
+          setDept(v as StockDept)
+          setReceiveForm(emptyReceiveForm)
+          setStockQuery('')
+        }}
+      />
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <select className="input max-w-xs" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+          {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        {alertCount > 0 && (
+          <span className="text-sm text-red-600 font-medium">{alertCount} alert{alertCount === 1 ? '' : 's'}</span>
+        )}
+      </div>
+
       <Tabs
         tabs={[
           { id: 'stock', label: `Stock (${items.length})` },
+          { id: 'alerts', label: alertCount > 0 ? `Alerts (${alertCount})` : 'Alerts' },
           { id: 'receive', label: 'Stock In' },
           { id: 'suppliers', label: `Suppliers (${suppliers.length})` },
           { id: 'wastage', label: 'Stock Out' },
         ]}
         active={tab}
-        onChange={(t) => setTab(t as typeof tab)}
+        onChange={(t) => setTab(t as StoreTab)}
       />
 
       {tab === 'stock' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <select className="input max-w-xs" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setAddOpen(true)}>+ New Item</button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                setLabTestLinks([])
+                setAddOpen(true)
+              }}
+            >
+              + New {deptLabel} Item
+            </button>
           </div>
           <input className="input" placeholder="Search item / SKU" value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} />
           <DataTable
@@ -213,28 +315,108 @@ export default function StoreCounterPage() {
               { key: 'name', label: 'Item', render: (r) => r.item.name },
               { key: 'sku', label: 'SKU', render: (r) => r.item.sku },
               { key: 'cost', label: 'Buy Price', render: (r) => formatMoney(Number(r.item.cost)) },
-              { key: 'price', label: 'Sell Price', render: (r) => formatMoney(Number(r.item.price)) },
+              ...(dept !== 'lab' ? [{
+                key: 'price',
+                label: 'Sell Price',
+                render: (r: any) => {
+                  const p = Number(r.item.price)
+                  return p > 0 ? formatMoney(p) : <span className="text-slate-400">—</span>
+                },
+              }] : []),
               { key: 'on_hand', label: 'On Hand', render: (r) => <span className={r.is_low ? 'text-red-600 font-semibold' : ''}>{r.on_hand}</span> },
+              ...(dept === 'lab' ? [{
+                key: 'tests',
+                label: 'Used for tests',
+                render: (r: any) => {
+                  const links = r.lab_tests || []
+                  if (!links.length) return <span className="text-slate-400">—</span>
+                  const text = links.map((l: any) => l.test_name).join(', ')
+                  return <span className="text-xs text-slate-600 line-clamp-2" title={text}>{text}</span>
+                },
+              }] : []),
               { key: 'expiry', label: 'Nearest Expiry', render: (r) => r.nearest_expiry || '—' },
               { key: 'status', label: 'Status', render: (r) => <StatusBadge value={r.is_low ? 'LOW STOCK' : 'OK'} /> },
               { key: 'act', label: '', render: (r) => (
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditItem({ id: r.item.id, name: r.item.name, price: r.item.price, cost: r.item.cost, min_stock: r.item.min_stock })}>Edit</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setEditItem({ id: r.item.id, name: r.item.name, price: r.item.price, cost: r.item.cost, min_stock: r.item.min_stock })
+                    setEditLabTestLinks((r.lab_tests || []).map((l: any) => ({ test_item_id: l.test_item_id, qty: l.qty })))
+                  }}
+                >
+                  Edit
+                </button>
               ) },
             ]}
-            emptyText="No stock items"
+            emptyText={`No ${deptLabel} stock items`}
           />
         </div>
       )}
 
+      {tab === 'alerts' && (
+        <div className="space-y-4">
+          <Alert tone="info">
+            {deptLabel} — low stock, near-expiry (30 days), and expired batches for the selected warehouse. Refreshes every 30 seconds.
+          </Alert>
+
+          <div className="card">
+            <h3 className="font-semibold text-slate-800 mb-2">Low Stock ({alerts.low_stock?.length || 0})</h3>
+            <DataTable
+              rows={alerts.low_stock || []}
+              columns={[
+                { key: 'name', label: 'Item', render: (r) => String(r.name) },
+                { key: 'qty', label: 'On Hand', render: (r) => <span className="text-red-600 font-semibold">{r.qty}</span> },
+                { key: 'min', label: 'Min', render: (r) => String(r.min) },
+              ]}
+              emptyText="No low stock alerts"
+            />
+          </div>
+
+          <div className="card">
+            <h3 className="font-semibold text-slate-800 mb-2">Near Expiry ({alerts.near_expiry?.length || 0})</h3>
+            <DataTable
+              rows={alerts.near_expiry || []}
+              columns={[
+                { key: 'item', label: 'Item', render: (r) => String(r.item) },
+                { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
+                { key: 'expiry', label: 'Expiry', render: (r) => String(r.expiry) },
+                { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
+              ]}
+              emptyText="No near-expiry batches"
+            />
+          </div>
+
+          <div className="card">
+            <h3 className="font-semibold text-slate-800 mb-2">Expired ({alerts.expired?.length || 0})</h3>
+            <DataTable
+              rows={alerts.expired || []}
+              columns={[
+                { key: 'item', label: 'Item', render: (r) => String(r.item) },
+                { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
+                { key: 'expiry', label: 'Expiry', render: (r) => <span className="text-red-600 font-semibold">{r.expiry}</span> },
+                { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
+              ]}
+              emptyText="No expired batches"
+            />
+          </div>
+        </div>
+      )}
+
       {addOpen && (
-        <Modal title="Add New Item" onClose={() => setAddOpen(false)}>
+        <Modal title={`Add ${deptLabel} item`} onClose={() => setAddOpen(false)}>
           <input className="input" placeholder="Item name *" value={medForm.name} onChange={(e) => setMedForm({ ...medForm, name: e.target.value })} />
           <input className="input" placeholder="SKU (auto if empty)" value={medForm.sku} onChange={(e) => setMedForm({ ...medForm, sku: e.target.value })} />
-          <div className="grid grid-cols-2 gap-2">
+          <div className={dept === 'lab' ? '' : 'grid grid-cols-2 gap-2'}>
             <input className="input" type="number" placeholder="Buy price" value={medForm.cost} onChange={(e) => setMedForm({ ...medForm, cost: e.target.value })} />
-            <input className="input" type="number" placeholder="Sell price" value={medForm.price} onChange={(e) => setMedForm({ ...medForm, price: e.target.value })} />
+            {dept !== 'lab' && (
+              <input className="input" type="number" placeholder="Sell price (optional)" value={medForm.price} onChange={(e) => setMedForm({ ...medForm, price: e.target.value })} />
+            )}
           </div>
           <input className="input" type="number" placeholder="Low stock alert qty" value={medForm.min_stock} onChange={(e) => setMedForm({ ...medForm, min_stock: e.target.value })} />
+          {dept === 'lab' && (
+            <LabReagentTestPicker tests={labBillableTests} value={labTestLinks} onChange={setLabTestLinks} disabled={busy} />
+          )}
           <div className="flex gap-2">
             <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={addMedicine}>Save</button>
             <button type="button" className="btn btn-secondary flex-1" onClick={() => setAddOpen(false)}>Cancel</button>
@@ -245,11 +427,16 @@ export default function StoreCounterPage() {
       {editItem && (
         <Modal title={`Edit — ${editItem.name}`} onClose={() => setEditItem(null)}>
           <input className="input" value={editItem.name} onChange={(e) => setEditItem({ ...editItem, name: e.target.value })} />
-          <div className="grid grid-cols-2 gap-2">
+          <div className={dept === 'lab' ? '' : 'grid grid-cols-2 gap-2'}>
             <input className="input" type="number" placeholder="Buy price" value={editItem.cost} onChange={(e) => setEditItem({ ...editItem, cost: e.target.value })} />
-            <input className="input" type="number" placeholder="Sell price" value={editItem.price} onChange={(e) => setEditItem({ ...editItem, price: e.target.value })} />
+            {dept !== 'lab' && (
+              <input className="input" type="number" placeholder="Sell price (optional)" value={editItem.price} onChange={(e) => setEditItem({ ...editItem, price: e.target.value })} />
+            )}
           </div>
           <input className="input" type="number" placeholder="Low stock alert" value={editItem.min_stock} onChange={(e) => setEditItem({ ...editItem, min_stock: e.target.value })} />
+          {dept === 'lab' && (
+            <LabReagentTestPicker tests={labBillableTests} value={editLabTestLinks} onChange={setEditLabTestLinks} disabled={busy} />
+          )}
           <div className="flex gap-2">
             <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={saveItemEdit}>Save</button>
             <button type="button" className="btn btn-secondary flex-1" onClick={() => setEditItem(null)}>Cancel</button>

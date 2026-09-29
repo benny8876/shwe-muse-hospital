@@ -11,6 +11,7 @@ import Alert from '../../components/Alert'
 import ToggleGroup from '../../components/ToggleGroup'
 import StatCard from '../../components/StatCard'
 import { formatMoney, formatDate } from '../../lib/format'
+import { DOCTOR_SPECIALTY_PRESETS, normalizeSpecialty } from '../../lib/doctorSpecialties'
 
 export default function CashierCounterPage() {
   const branchId = useBranchId()
@@ -43,13 +44,19 @@ export default function CashierCounterPage() {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [doctors, setDoctors] = useState<any[]>([])
-  const [doctorForm, setDoctorForm] = useState({ full_name: '', consultation_fee: '', specialty: 'General Medicine' })
+  const [doctorForm, setDoctorForm] = useState({
+    full_name: '',
+    consultation_fee: '',
+    specialty: 'General Medicine',
+    specialtyCustom: '',
+  })
   const [editDoctor, setEditDoctor] = useState<any>(null)
   const [serviceDept, setServiceDept] = useState<'lab' | 'xray' | 'usg'>('lab')
   const [serviceItems, setServiceItems] = useState<any[]>([])
   const [serviceForm, setServiceForm] = useState({ name: '', price: '' })
   const [editService, setEditService] = useState<any>(null)
   const [busy, setBusy] = useState(false)
+  const [depositAmount, setDepositAmount] = useState<number | ''>('')
 
   const PAY_METHODS = ['cash', 'kpay', 'wave'] as const
   const payMethodLabel = (m: string) => (m === 'wave' ? 'WAVE PAY' : m.toUpperCase())
@@ -144,17 +151,25 @@ export default function CashierCounterPage() {
     setDoctors(data)
   }
 
+  function resolveDoctorSpecialty(specialty: string, custom: string) {
+    if (specialty === 'Other') return custom.trim() || 'Other'
+    return normalizeSpecialty(specialty)
+  }
+
   async function addDoctor() {
     if (!doctorForm.full_name.trim()) return toast.error('Doctor name required')
+    if (doctorForm.specialty === 'Other' && !doctorForm.specialtyCustom.trim()) {
+      return toast.error('Enter department name for Other')
+    }
     setBusy(true)
     try {
       await api.post('/counter/doctors', {
         full_name: doctorForm.full_name.trim(),
         consultation_fee: Number(doctorForm.consultation_fee) || 0,
-        specialty: doctorForm.specialty.trim() || 'General Medicine',
+        specialty: resolveDoctorSpecialty(doctorForm.specialty, doctorForm.specialtyCustom),
       }, { params: { branch_id: branchId } })
       toast.success('Doctor added')
-      setDoctorForm({ full_name: '', consultation_fee: '', specialty: 'General Medicine' })
+      setDoctorForm({ full_name: '', consultation_fee: '', specialty: 'General Medicine', specialtyCustom: '' })
       await loadDoctors()
     } catch (e) {
       toast.error(getApiError(e))
@@ -219,12 +234,15 @@ export default function CashierCounterPage() {
 
   async function saveDoctorEdit() {
     if (!editDoctor) return
+    if (editDoctor.specialty === 'Other' && !editDoctor.specialtyCustom?.trim()) {
+      return toast.error('Enter department name for Other')
+    }
     setBusy(true)
     try {
       await api.patch(`/counter/doctors/${editDoctor.id}`, {
         full_name: editDoctor.full_name,
         consultation_fee: Number(editDoctor.consultation_fee),
-        specialty: editDoctor.specialty,
+        specialty: resolveDoctorSpecialty(editDoctor.specialty, editDoctor.specialtyCustom || ''),
       })
       toast.success('Doctor updated')
       setEditDoctor(null)
@@ -295,6 +313,7 @@ export default function CashierCounterPage() {
     setSplits([])
     setSplitAmount(0)
     setPayMethod('cash')
+    setDepositAmount('')
     setDiscountInput('')
     setSelected({ ...inv, lines: inv.lines || [], payments: inv.payments || [] })
     setBusy(true)
@@ -345,6 +364,28 @@ export default function CashierCounterPage() {
 
   function fillRemaining() {
     if (remainingDue > 0) setSplitAmount(remainingDue)
+  }
+
+  const isIpdBill = selected && String(selected.kind || '').toLowerCase() === 'ipd' && selected.admission_id
+  const ipdAdvance = selected ? Math.max(Number(selected.paid) - Number(selected.total), 0) : 0
+
+  async function submitIpdDeposit() {
+    if (!selected || !isIpdBill) return
+    const amt = Number(depositAmount)
+    if (!amt || amt <= 0) return toast.error('Enter deposit amount')
+    setBusy(true)
+    try {
+      const { data } = await api.post(`/invoices/${selected.id}/ipd-deposit`, { amount: amt, method: payMethod })
+      toast.success(`IPD deposit recorded — paid ${formatMoney(data.paid)}`)
+      setSelected(data)
+      setDepositAmount('')
+      setSplitAmount(Number(data.balance))
+      await loadBills()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function confirmPayment() {
@@ -431,7 +472,14 @@ export default function CashierCounterPage() {
               { key: 'kind', label: 'Type', render: (r) => <StatusBadge value={String(r.kind || 'opd').toUpperCase()} /> },
               { key: 'patient', label: 'Patient', render: (r) => name(Number(r.patient_id)) },
               { key: 'total', label: 'Total', render: (r) => formatMoney(Number(r.total)) },
-              { key: 'balance', label: 'Due', render: (r) => formatMoney(Number(r.balance)) },
+              { key: 'balance', label: 'Due', render: (r) => {
+                const bal = Number(r.balance)
+                const isIpdStay = String(r.kind || '').toLowerCase() === 'ipd' && r.admission_id
+                if (isIpdStay && bal <= 0.01) {
+                  return <span className="text-green-700 text-xs font-medium">Advance · deposit OK</span>
+                }
+                return formatMoney(bal)
+              } },
               { key: 'act', label: '', render: (r) => (
                 <div className="flex gap-1">
                   <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); void openInvoice(r) }}>View</button>
@@ -489,6 +537,38 @@ export default function CashierCounterPage() {
                         <span>{formatMoney(p.amount)}</span>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {isIpdBill && (
+                  <div className="border-t pt-3 space-y-2">
+                    <Alert tone="info">
+                      <strong>IPD deposit / advance</strong> — balance ထက်ပိုပြီး လက်ခံနိုင်ပါတယ် (အကြိမ်ကြိမ်)။
+                      အောက်က Multi-Payment က လက်ရှိ <strong>due</strong> အတွက်သာ။
+                    </Alert>
+                    {ipdAdvance > 0.01 && (
+                      <div className="text-sm text-slate-600">
+                        Advance on account: <strong className="text-green-700">{formatMoney(ipdAdvance)}</strong>
+                      </div>
+                    )}
+                    <div className="font-medium">Collect IPD deposit</div>
+                    <ToggleGroup
+                      options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
+                      value={payMethod}
+                      onChange={setPayMethod}
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        className="input flex-1"
+                        type="number"
+                        placeholder="Deposit amount"
+                        value={depositAmount}
+                        onChange={(e) => setDepositAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                      />
+                      <button type="button" disabled={busy} className="btn btn-primary whitespace-nowrap" onClick={submitIpdDeposit}>
+                        Add deposit
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -650,12 +730,24 @@ export default function CashierCounterPage() {
               value={doctorForm.consultation_fee}
               onChange={(e) => setDoctorForm({ ...doctorForm, consultation_fee: e.target.value })}
             />
-            <input
+            <select
               className="input"
-              placeholder="Specialty"
               value={doctorForm.specialty}
               onChange={(e) => setDoctorForm({ ...doctorForm, specialty: e.target.value })}
-            />
+            >
+              {DOCTOR_SPECIALTY_PRESETS.map((sp) => (
+                <option key={sp} value={sp}>{sp}</option>
+              ))}
+            </select>
+            {doctorForm.specialty === 'Other' && (
+              <input
+                className="input"
+                placeholder="Department name (e.g. Cardiology)"
+                value={doctorForm.specialtyCustom}
+                onChange={(e) => setDoctorForm({ ...doctorForm, specialtyCustom: e.target.value })}
+              />
+            )}
+            <p className="text-xs text-slate-500">Reception မှာ Clinic/Department ရွေးပြီး ဆရာဝန် ရွေးမယ်</p>
             <button type="button" disabled={busy} className="btn btn-primary" onClick={addDoctor}>Save Doctor</button>
           </div>
 
@@ -671,17 +763,22 @@ export default function CashierCounterPage() {
               columns={[
                 { key: 'name', label: 'Doctor', render: (r) => String(r.name) },
                 { key: 'fee', label: 'Consultation Fee', render: (r) => formatMoney(Number(r.fee)) },
-                { key: 'specialty', label: 'Specialty', render: (r) => String(r.specialty || '—') },
+                { key: 'specialty', label: 'Clinic / Dept', render: (r) => String(r.specialty || '—') },
                 { key: 'act', label: '', render: (r) => (
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => setEditDoctor({
-                      id: r.id,
-                      full_name: r.name,
-                      consultation_fee: r.fee,
-                      specialty: r.specialty,
-                    })}
+                    onClick={() => {
+                      const sp = String(r.specialty || 'General Medicine')
+                      const preset = DOCTOR_SPECIALTY_PRESETS.includes(sp as typeof DOCTOR_SPECIALTY_PRESETS[number])
+                      setEditDoctor({
+                        id: r.id,
+                        full_name: r.name,
+                        consultation_fee: r.fee,
+                        specialty: preset ? sp : 'Other',
+                        specialtyCustom: preset ? '' : sp,
+                      })
+                    }}
                   >
                     Edit
                   </button>
@@ -705,12 +802,23 @@ export default function CashierCounterPage() {
                 value={editDoctor.consultation_fee}
                 onChange={(e) => setEditDoctor({ ...editDoctor, consultation_fee: e.target.value })}
               />
-              <input
+              <select
                 className="input"
-                placeholder="Specialty"
-                value={editDoctor.specialty || ''}
+                value={editDoctor.specialty || 'General Medicine'}
                 onChange={(e) => setEditDoctor({ ...editDoctor, specialty: e.target.value })}
-              />
+              >
+                {DOCTOR_SPECIALTY_PRESETS.map((sp) => (
+                  <option key={sp} value={sp}>{sp}</option>
+                ))}
+              </select>
+              {editDoctor.specialty === 'Other' && (
+                <input
+                  className="input"
+                  placeholder="Department name"
+                  value={editDoctor.specialtyCustom || ''}
+                  onChange={(e) => setEditDoctor({ ...editDoctor, specialtyCustom: e.target.value })}
+                />
+              )}
               <div className="flex gap-2">
                 <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={saveDoctorEdit}>Save</button>
                 <button type="button" className="btn btn-secondary flex-1" onClick={() => setEditDoctor(null)}>Cancel</button>

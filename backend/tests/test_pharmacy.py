@@ -172,3 +172,32 @@ def test_pharmacy_walk_in_sale_defaults_name_when_blank(client, pharmacy_headers
     )
     assert r.status_code == 200
     assert r.json()["name"] == "Walk-in Customer"
+
+
+def test_store_departments_keep_lab_supplies_out_of_pharmacy(client, pharmacy_headers):
+    created = client.post(
+        "/api/v1/inventory/medicines",
+        json={"name": "EDTA Tube", "sku": "LABS-TUBE", "price": 0, "cost": 200, "min_stock": 10, "department": "lab"},
+        headers=pharmacy_headers,
+    )
+    assert created.status_code == 200
+    assert created.json()["department"] == "lab"
+    assert created.json()["category"] == "supply"
+
+    xray = client.post(
+        "/api/v1/inventory/medicines",
+        json={"name": "X-ray Film 14x17", "department": "xray", "min_stock": 5},
+        headers=pharmacy_headers,
+    )
+    assert xray.status_code == 200
+    assert xray.json()["department"] == "xray"
+
+    pharmacy = client.get("/api/v1/inventory/items", params={"department": "pharmacy"}, headers=pharmacy_headers).json()
+    lab = client.get("/api/v1/inventory/items", params={"department": "lab"}, headers=pharmacy_headers).json()
+    assert all(row["item"]["department"] in ("pharmacy", "drug") for row in pharmacy)
+    assert any(row["item"]["sku"] == "LABS-TUBE" for row in lab)
+    assert all(row["item"]["sku"] != "LABS-TUBE" for row in pharmacy)
+
+    alerts = client.get("/api/v1/inventory/alerts", params={"department": "lab"}, headers=pharmacy_headers).json()
+    assert any(row["name"] == "EDTA Tube" for row in alerts["low_stock"])
+    assert all(row["name"] != "Paracetamol 500mg" for row in alerts["low_stock"])

@@ -28,6 +28,11 @@ class DischargeIn(BaseModel):
     summary: str = ""
 
 
+class IpdDepositIn(BaseModel):
+    amount: float
+    method: str = "deposit"  # deposit | cash | kpay | wave | card
+
+
 class TransferIn(BaseModel):
     bed_id: int
 
@@ -71,6 +76,12 @@ class WastageIn(BaseModel):
     reason: str
 
 
+class LabReagentTestLinkIn(BaseModel):
+    """One lab billable test that consumes this reagent, with qty per test run."""
+    test_item_id: int
+    qty: float = 1
+
+
 class MedicineIn(BaseModel):
     name: str
     sku: str = ""
@@ -78,6 +89,9 @@ class MedicineIn(BaseModel):
     price: float = 0
     cost: float = 0
     min_stock: float = 10
+    # pharmacy | lab | xray | usg — stock segments on the Store counter
+    department: str = "pharmacy"
+    lab_tests: list[LabReagentTestLinkIn] = []
 
 
 class MedicineUpdateIn(BaseModel):
@@ -85,6 +99,7 @@ class MedicineUpdateIn(BaseModel):
     price: float | None = None
     cost: float | None = None
     min_stock: float | None = None
+    lab_tests: list[LabReagentTestLinkIn] | None = None
 
 
 class WardMedOrderItemIn(BaseModel):
@@ -96,6 +111,7 @@ class WardMedOrderIn(BaseModel):
     patient_id: int
     branch_id: int
     admission_id: int | None = None
+    invoice_id: int | None = None
     note: str = ""
     items: list[WardMedOrderItemIn] = []
 

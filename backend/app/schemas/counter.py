@@ -9,6 +9,8 @@ class ReceptionRegisterIn(BaseModel):
     phone: str = ""
     gender: str = "F"
     age_years: int | None = None
+    age_months: int | None = None
+    age_days: int | None = None
     address: str = ""
     father_name: str = ""
     referring_doctor: str = ""
@@ -62,6 +64,18 @@ class LabOrderCounterIn(BaseModel):
     branch_id: int
     patient_id: int
     item_id: int
+    invoice_id: int | None = None
+
+
+class LabWalkIn(BaseModel):
+    branch_id: int
+    name: str
+    phone: str = ""
+    gender: str = ""
+    age_years: int | None = None
+    age_months: int | None = None
+    age_days: int | None = None
+    referring_doctor: str = ""
 
 
 class LabResultIn(BaseModel):
@@ -87,6 +101,7 @@ class PharmacyCounterIn(BaseModel):
     warehouse_id: int
     qty: float = 1
     prescription_item_id: int | None = None
+    invoice_id: int | None = None
 
 
 class XrayCounterIn(BaseModel):

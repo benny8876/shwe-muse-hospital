@@ -10,7 +10,13 @@ import StatusBadge from '../../components/StatusBadge'
 import ToggleGroup from '../../components/ToggleGroup'
 import RegistrationLabel from '../../components/RegistrationLabel'
 import Modal from '../../components/Modal'
-import { formatDate } from '../../lib/format'
+import Alert from '../../components/Alert'
+import { formatAge, formatDate, formatMoney } from '../../lib/format'
+import {
+  doctorOptionLabel,
+  doctorsInSpecialty,
+  specialtyOptionsForDoctors,
+} from '../../lib/doctorSpecialties'
 
 function Field({ label, className = '', children }: { label: string; className?: string; children: ReactNode }) {
   return (
@@ -34,13 +40,14 @@ export default function ReceptionCounterPage() {
   const [beds, setBeds] = useState<Bed[]>([])
   const [mode, setMode] = useState<'new' | 'existing'>('new')
   const [patientType, setPatientType] = useState<'opd' | 'ipd'>('opd')
+  const [doctorSpecialty, setDoctorSpecialty] = useState('General Medicine')
   const [doctorId, setDoctorId] = useState('')
   const [patientId, setPatientId] = useState('')
   const [wardId, setWardId] = useState('')
   const [bedId, setBedId] = useState('')
   const [billingMode, setBillingMode] = useState('daily')
   const [deposit, setDeposit] = useState('')
-  const [form, setForm] = useState({ name: '', father_name: '', phone: '', gender: 'F', age_years: '', address: '', referring_doctor: '' })
+  const [form, setForm] = useState({ name: '', father_name: '', phone: '', gender: 'F', age_years: '', age_months: '', age_days: '', address: '', referring_doctor: '' })
   const [result, setResult] = useState<any>(null)
   const [tab, setTab] = useState('register')
   const [historyRows, setHistoryRows] = useState<any[]>([])
@@ -55,6 +62,19 @@ export default function ReceptionCounterPage() {
   const [convertBedId, setConvertBedId] = useState('')
   const [convertBeds, setConvertBeds] = useState<Bed[]>([])
   const [convertBusy, setConvertBusy] = useState(false)
+
+  const [ipdActive, setIpdActive] = useState<any[]>([])
+  const [dischargePick, setDischargePick] = useState<any | null>(null)
+  const [dischargeSummary, setDischargeSummary] = useState('')
+  const [dischargeBusy, setDischargeBusy] = useState(false)
+
+  const [depositPick, setDepositPick] = useState<any | null>(null)
+  const [extraDepositAmount, setExtraDepositAmount] = useState('')
+  const [extraDepositMethod, setExtraDepositMethod] = useState('cash')
+  const [extraDepositBusy, setExtraDepositBusy] = useState(false)
+
+  const [convertDeposit, setConvertDeposit] = useState('')
+  const [convertBillingMode, setConvertBillingMode] = useState('daily')
 
   useEffect(() => {
     if (convertTarget === 'ipd' && convertWardId) {
@@ -76,6 +96,8 @@ export default function ReceptionCounterPage() {
         patient_id: Number(convertPatientId),
         target_type: convertTarget,
         bed_id: convertTarget === 'ipd' ? Number(convertBedId) : null,
+        deposit: convertTarget === 'ipd' ? Number(convertDeposit) || 0 : 0,
+        billing_mode: convertTarget === 'ipd' ? convertBillingMode : 'daily',
       })
       toast.success(`Converted to ${data.patient_type.toUpperCase()} — ${data.invoice_number}`)
       setConvertPatientId('')
@@ -99,6 +121,23 @@ export default function ReceptionCounterPage() {
   useEffect(() => {
     api.get('/doctors').then((r) => setDoctors(r.data)).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (doctors.length === 0) return
+    const opts = specialtyOptionsForDoctors(doctors)
+    if (doctorsInSpecialty(doctors, doctorSpecialty).length === 0 && opts[0]) {
+      setDoctorSpecialty(opts[0])
+    }
+  }, [doctors, doctorSpecialty])
+
+  const doctorSpecialtyOptions = specialtyOptionsForDoctors(doctors)
+  const doctorsForSpecialty = doctorsInSpecialty(doctors, doctorSpecialty)
+
+  useEffect(() => {
+    if (!doctorId) return
+    const still = doctorsForSpecialty.some((d) => String(d.id) === doctorId)
+    if (!still) setDoctorId('')
+  }, [doctorSpecialty, doctorsForSpecialty, doctorId])
 
   useEffect(() => {
     api.get('/counter/wards', { params: { branch_id: branchId } })
@@ -126,7 +165,57 @@ export default function ReceptionCounterPage() {
         .then((r) => setHistoryRows(r.data))
         .catch((e) => toast.error(getApiError(e)))
     }
+    if (tab === 'discharge' || tab === 'ipd-deposit') {
+      api.get('/counter/active-patients', { params: { branch_id: branchId } })
+        .then((r) => setIpdActive(r.data.filter((p: any) => (p.invoice_kind || '').toLowerCase() === 'ipd' && p.admission_id)))
+        .catch((e) => toast.error(getApiError(e)))
+    }
   }, [tab, branchId, toast])
+
+  async function submitExtraDeposit() {
+    if (!depositPick?.admission_id) return toast.error('IPD လူနာ ရွေးပါ')
+    const amt = Number(extraDepositAmount)
+    if (!amt || amt <= 0) return toast.error('Deposit amount ထည့်ပါ')
+    setExtraDepositBusy(true)
+    try {
+      await api.post(`/ipd/admissions/${depositPick.admission_id}/deposit`, {
+        amount: amt,
+        method: extraDepositMethod,
+      })
+      toast.success(`Deposit ${formatMoney(amt)} recorded — ${depositPick.name}`)
+      setExtraDepositAmount('')
+      const { data: rows } = await api.get('/counter/active-patients', { params: { branch_id: branchId } })
+      setIpdActive(rows.filter((p: any) => (p.invoice_kind || '').toLowerCase() === 'ipd' && p.admission_id))
+      const updated = rows.find((p: any) => p.admission_id === depositPick.admission_id)
+      if (updated) setDepositPick(updated)
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setExtraDepositBusy(false)
+    }
+  }
+
+  async function dischargeIpd() {
+    if (!dischargePick?.admission_id) return toast.error('IPD လူနာ ရွေးပါ')
+    setDischargeBusy(true)
+    try {
+      const { data } = await api.post(`/ipd/admissions/${dischargePick.admission_id}/discharge`, { summary: dischargeSummary })
+      const inv = data.invoice
+      toast.success(
+        inv
+          ? `Discharged — ${dischargePick.name}: bill ${inv.status}, balance ${formatMoney(inv.balance)} → Cashier`
+          : `Discharged — ${dischargePick.name}`,
+      )
+      setDischargePick(null)
+      setDischargeSummary('')
+      const { data: rows } = await api.get('/counter/active-patients', { params: { branch_id: branchId } })
+      setIpdActive(rows.filter((p: any) => (p.invoice_kind || '').toLowerCase() === 'ipd' && p.admission_id))
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setDischargeBusy(false)
+    }
+  }
 
   const historyTerms = historyQuery.trim().toLowerCase().split(/[,\s]+/).filter(Boolean)
   const filteredHistory = historyRows.filter((r) => {
@@ -162,6 +251,10 @@ export default function ReceptionCounterPage() {
     if (!doctorId) return toast.error('ဆရာဝန် ရွေးပါ')
     if (mode === 'existing' && !patientId) return toast.error('လူနာ ရွေးပါ')
     if (mode === 'new' && !form.name.trim()) return toast.error('အမည် ထည့်ပါ')
+    const months = form.age_months === '' ? null : Number(form.age_months)
+    const days = form.age_days === '' ? null : Number(form.age_days)
+    if (months != null && (months < 0 || months > 11)) return toast.error('လ ကို ၀ ကနေ ၁၁ အထိ ထည့်ပါ')
+    if (days != null && (days < 0 || days > 30)) return toast.error('ရက် ကို ၀ ကနေ ၃၀ အထိ ထည့်ပါ')
     if (patientType === 'ipd' && !bedId) return toast.error('Ward / Bed ရွေးပါ')
 
     setBusy(true)
@@ -173,7 +266,9 @@ export default function ReceptionCounterPage() {
         name: form.name,
         phone: form.phone,
         gender: form.gender,
-        age_years: form.age_years ? Number(form.age_years) : null,
+        age_years: form.age_years === '' ? (months != null || days != null ? 0 : null) : Number(form.age_years),
+        age_months: months,
+        age_days: days,
         address: form.address,
         father_name: form.father_name,
         referring_doctor: form.referring_doctor,
@@ -184,7 +279,7 @@ export default function ReceptionCounterPage() {
       })
       setResult(data)
       toast.success(patientType === 'ipd' ? `IPD Admitted — ${data.invoice_number}` : `OPD Registered — ${data.invoice_number}`)
-      if (mode === 'new') setForm({ name: '', father_name: '', phone: '', gender: 'F', age_years: '', address: '', referring_doctor: '' })
+      if (mode === 'new') setForm({ name: '', father_name: '', phone: '', gender: 'F', age_years: '', age_months: '', age_days: '', address: '', referring_doctor: '' })
       setPatientId('')
       setBedId('')
       setDeposit('')
@@ -199,6 +294,8 @@ export default function ReceptionCounterPage() {
     <div>
       <Tabs tabs={[
         { id: 'register', label: 'Register' },
+        { id: 'discharge', label: 'IPD Discharge' },
+        { id: 'ipd-deposit', label: 'IPD Deposit' },
         { id: 'convert', label: 'Convert OPD ⇄ IPD' },
         { id: 'history', label: 'Bill History' },
       ]} active={tab} onChange={setTab} />
@@ -239,7 +336,12 @@ export default function ReceptionCounterPage() {
                   <input className="input" value={form.father_name} onChange={(e) => setForm({ ...form, father_name: e.target.value })} />
                 </Field>
                 <Field label="Age">
-                  <input className="input" type="number" value={form.age_years} onChange={(e) => setForm({ ...form, age_years: e.target.value })} />
+                  <div className="grid grid-cols-3 gap-2">
+                    <input className="input" type="number" min={0} placeholder="နှစ်" value={form.age_years} onChange={(e) => setForm({ ...form, age_years: e.target.value })} />
+                    <input className="input" type="number" min={0} max={11} placeholder="လ" value={form.age_months} onChange={(e) => setForm({ ...form, age_months: e.target.value })} />
+                    <input className="input" type="number" min={0} max={30} placeholder="ရက်" value={form.age_days} onChange={(e) => setForm({ ...form, age_days: e.target.value })} />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">နှစ်၊ လ (၀–၁၁)၊ ရက် (၀–၃၀)</p>
                 </Field>
                 <Field label="Gender">
                   <select className="input" value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
@@ -263,14 +365,30 @@ export default function ReceptionCounterPage() {
             )}
           </div>
 
-          <Field label="Attending Doctor" className="max-w-md">
-            <select className="input" value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
-              <option value="">Select doctor...</option>
-              {doctors.map((d) => (
-                <option key={d.id} value={d.id}>{d.full_name}</option>
-              ))}
-            </select>
-          </Field>
+          <div className="max-w-md space-y-3">
+            <Field label="Clinic / Department">
+              <select
+                className="input"
+                value={doctorSpecialty}
+                onChange={(e) => setDoctorSpecialty(e.target.value)}
+              >
+                {doctorSpecialtyOptions.map((sp) => (
+                  <option key={sp} value={sp}>{sp}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Attending Doctor">
+              <select className="input" value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
+                <option value="">Select doctor...</option>
+                {doctorsForSpecialty.map((d) => (
+                  <option key={d.id} value={d.id}>{doctorOptionLabel(d)}</option>
+                ))}
+              </select>
+              {doctorsForSpecialty.length === 0 && (
+                <p className="text-xs text-amber-700 mt-1">ဤ department အတွက် ဆရာဝန် မရှိသေး — Cashier → Doctors မှာ specialty ထည့်ပါ။</p>
+              )}
+            </Field>
+          </div>
 
           {patientType === 'ipd' && (
             <div className="border-t border-slate-200 pt-4">
@@ -323,7 +441,7 @@ export default function ReceptionCounterPage() {
               </div>
               <div>ID: <strong>{result.patient?.uhid}</strong></div>
               <div>Bill: <strong>{result.invoice_number}</strong></div>
-              <div>Doctor: {result.doctor_name}</div>
+              <div>Doctor: {result.doctor_name}{result.doctor_specialty ? ` (${result.doctor_specialty})` : ''}</div>
               {result.patient_type === 'ipd' && (
                 <>
                   <div>Ward: {result.ward_name}</div>
@@ -340,12 +458,103 @@ export default function ReceptionCounterPage() {
       </div>
       )}
 
+      {tab === 'discharge' && (
+        <div className="max-w-lg card space-y-4">
+          <Alert tone="info">
+            ဆေးရုံဆင်းပြီး bed လွှတ်မယ် — IPD bill က Cashier မှာ ရှင်းပါ။ OPD follow-up အတွက် <strong>Convert</strong> tab သုံးပါ (ဒီ tab မဟုတ်)။
+          </Alert>
+          <h3 className="font-semibold text-slate-800">Admitted IPD patients (open bill)</h3>
+          <div className="flex flex-wrap gap-2">
+            {ipdActive.length === 0 && <p className="text-sm text-slate-500">No admitted IPD patients with open bills</p>}
+            {ipdActive.map((p) => (
+              <button
+                key={p.invoice_id}
+                type="button"
+                onClick={() => setDischargePick(p)}
+                className={`rounded-full border px-3 py-1.5 text-sm ${dischargePick?.invoice_id === p.invoice_id ? 'border-[var(--brand-600)] bg-[var(--brand-50)]' : 'border-slate-300 hover:border-[var(--brand-600)]'}`}
+              >
+                {p.name} · {p.uhid} · {formatMoney(p.balance)} due
+              </button>
+            ))}
+          </div>
+          {dischargePick && (
+            <>
+              <div className="text-sm text-slate-600">
+                Bill <strong>{dischargePick.invoice_number}</strong>
+                <StatusBadge value={String(dischargePick.invoice_status || 'open').toUpperCase()} />
+              </div>
+              <textarea
+                className="input min-h-24"
+                placeholder="Discharge summary (optional)"
+                value={dischargeSummary}
+                onChange={(e) => setDischargeSummary(e.target.value)}
+              />
+              <button type="button" disabled={dischargeBusy} className="btn btn-primary w-full" onClick={dischargeIpd}>
+                Discharge & release bed
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'ipd-deposit' && (
+        <div className="max-w-lg card space-y-4">
+          <Alert tone="info">
+            တက်နေစဉ် အကြိုငွေ ထပ်သွင်းပါ — Cashier မှာလည်း လုပ်နိုင်ပါတယ်။
+          </Alert>
+          <h3 className="font-semibold text-slate-800">Admitted IPD patients</h3>
+          <div className="flex flex-wrap gap-2">
+            {ipdActive.length === 0 && <p className="text-sm text-slate-500">No admitted IPD patients with open bills</p>}
+            {ipdActive.map((p) => (
+              <button
+                key={p.invoice_id}
+                type="button"
+                onClick={() => setDepositPick(p)}
+                className={`rounded-full border px-3 py-1.5 text-sm ${depositPick?.invoice_id === p.invoice_id ? 'border-[var(--brand-600)] bg-[var(--brand-50)]' : 'border-slate-300 hover:border-[var(--brand-600)]'}`}
+              >
+                {p.name} · {p.uhid}
+                {p.balance > 0.01 ? ` · ${formatMoney(p.balance)} due` : ' · advance OK'}
+              </button>
+            ))}
+          </div>
+          {depositPick && (
+            <>
+              <div className="text-sm text-slate-600 flex flex-wrap items-center gap-2">
+                Bill <strong>{depositPick.invoice_number}</strong>
+                <StatusBadge value={String(depositPick.invoice_status || 'open').toUpperCase()} />
+                <span>Paid: {formatMoney(Number(depositPick.total || 0) - Number(depositPick.balance || 0))}</span>
+                <span>Due: {formatMoney(Number(depositPick.balance || 0))}</span>
+              </div>
+              <select className="input" value={extraDepositMethod} onChange={(e) => setExtraDepositMethod(e.target.value)}>
+                <option value="cash">Cash</option>
+                <option value="kpay">KPay</option>
+                <option value="wave">Wave</option>
+                <option value="deposit">Deposit (ledger)</option>
+              </select>
+              <input
+                className="input"
+                type="number"
+                placeholder="Deposit amount (MMK)"
+                value={extraDepositAmount}
+                onChange={(e) => setExtraDepositAmount(e.target.value)}
+              />
+              <button type="button" disabled={extraDepositBusy} className="btn btn-primary w-full" onClick={submitExtraDeposit}>
+                Record deposit
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {tab === 'convert' && (
         <div className="max-w-lg card space-y-4">
-          <p className="text-sm text-slate-600">စစ်ဆေးပြီးတဲ့ လူနာကို OPD ⇄ IPD ပြောင်းလို့ရပါတယ် (ဥပမာ — OPD ကတွေ့ပြီး ဆေးရုံတက်ဖို့လိုလာရင်)။</p>
+          <p className="text-sm text-slate-600">
+            Visit type ပြောင်းခြင်း — OPD ကတွေ့ပြီး ဆေးရုံတက်ရင် <strong>→ IPD</strong>။
+            ဆေးရုံမဆင်းသေးပဲ OPD bill အသစ် လိုရင် <strong>→ OPD (new visit)</strong> — IPD discharge မဟုတ်ပါ (အဲဒါက IPD Discharge tab)။
+          </p>
           <PatientSelect className="input" value={convertPatientId} onChange={setConvertPatientId} />
           <ToggleGroup
-            options={[{ value: 'ipd', label: '→ IPD (Admit)' }, { value: 'opd', label: '→ OPD (Discharge)' }]}
+            options={[{ value: 'ipd', label: '→ IPD (Admit)' }, { value: 'opd', label: '→ OPD (ends IPD stay + new OPD bill)' }]}
             value={convertTarget}
             onChange={(v) => setConvertTarget(v as typeof convertTarget)}
           />
@@ -359,6 +568,18 @@ export default function ReceptionCounterPage() {
                 <option value="">Select bed...</option>
                 {convertBeds.map((b) => <option key={b.id} value={b.id}>{b.code}</option>)}
               </select>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Billing rate">
+                  <select className="input" value={convertBillingMode} onChange={(e) => setConvertBillingMode(e.target.value)}>
+                    <option value="daily">Daily rate</option>
+                    <option value="hourly">Hourly rate</option>
+                    <option value="package">Package rate</option>
+                  </select>
+                </Field>
+                <Field label="Deposit (optional)">
+                  <input className="input" type="number" value={convertDeposit} onChange={(e) => setConvertDeposit(e.target.value)} />
+                </Field>
+              </div>
             </>
           )}
           <button type="button" disabled={convertBusy} className="btn btn-primary w-full" onClick={convertPatientType}>
@@ -401,7 +622,7 @@ export default function ReceptionCounterPage() {
               {patientHistory.detail && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm border-b border-slate-200 pb-3">
                   <div><span className="text-slate-500">Father name:</span> <strong>{patientHistory.detail.father_name || '—'}</strong></div>
-                  <div><span className="text-slate-500">Age:</span> <strong>{patientHistory.detail.age_years ?? '—'}</strong></div>
+                  <div><span className="text-slate-500">Age:</span> <strong>{formatAge(patientHistory.detail.age_years, patientHistory.detail.age_months, patientHistory.detail.age_days)}</strong></div>
                   <div><span className="text-slate-500">Gender:</span> <strong>{patientHistory.detail.gender || '—'}</strong></div>
                   <div><span className="text-slate-500">Phone:</span> <strong>{patientHistory.detail.phone || '—'}</strong></div>
                   <div><span className="text-slate-500">NRC:</span> <strong>{patientHistory.detail.nrc || '—'}</strong></div>

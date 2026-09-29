@@ -5,7 +5,7 @@ type Props = {
   title: string
   patientName: string
   uhid: string
-  age?: number | null
+  age?: number | string | null
   gender?: string
   date?: string | null
   doctorName?: string

@@ -17,6 +17,72 @@ def test_patient_medical_history_lists_visits_and_treatments(client, reception_h
     assert any(t["category"] == "opd" for t in visit["treatments"])
 
 
+def test_patient_records_search_by_lab_test_and_keeps_other_patients_out(client, reception_headers, lab_headers, doctor_id):
+    matched = register_patient(client, reception_headers, doctor_id, "CBC Search Patient")
+    other = register_patient(client, reception_headers, doctor_id, "No Lab Patient")
+    lab_items = client.get("/api/v1/counter/lab-items", headers=lab_headers).json()
+    cbc = next(i for i in lab_items if "CBC" in i["name"])
+    r = client.post(
+        "/api/v1/counter/lab",
+        json={"branch_id": 1, "patient_id": matched["patient"]["id"], "item_id": cbc["id"]},
+        headers=lab_headers,
+    )
+    assert r.status_code == 200
+
+    found = client.get(
+        "/api/v1/counter/patient-records/search",
+        params={"branch_id": 1, "source": "lab", "q": "CBC"},
+        headers=reception_headers,
+    )
+    assert found.status_code == 200
+    ids = {row["patient_id"] for row in found.json()}
+    assert matched["patient"]["id"] in ids
+    assert other["patient"]["id"] not in ids
+
+    empty = client.get(
+        "/api/v1/counter/patient-records/search",
+        params={"branch_id": 1},
+        headers=reception_headers,
+    )
+    assert empty.status_code == 400
+
+
+def test_reception_stores_age_years_months_and_days(client, reception_headers, doctor_id):
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Age Days Patient",
+            "gender": "M",
+            "age_years": 0,
+            "age_months": 2,
+            "age_days": 15,
+            "patient_type": "opd",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    patient = r.json()["patient"]
+    assert patient["age_years"] == 0
+    assert patient["age_months"] == 2
+    assert patient["age_days"] == 15
+
+    bad = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Age Days Too High",
+            "gender": "F",
+            "age_days": 40,
+            "patient_type": "opd",
+        },
+        headers=reception_headers,
+    )
+    assert bad.status_code == 400
+
+
 def test_reception_register_creates_invoice_with_consultation_fee(client, reception_headers, cashier_headers, doctor_id):
     result = register_patient(client, reception_headers, doctor_id, "Billing Test Patient A")
     assert result["patient_type"] == "opd"

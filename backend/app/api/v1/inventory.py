@@ -12,12 +12,16 @@ from app.models.users import User
 from app.schemas.actions import DispenseIn, MedicineIn, MedicineUpdateIn, StockReceiveIn, WastageIn
 from app.services.inventory_service import (
     alerts,
+    apply_department,
     approve_wastage,
     create_medicine,
     dispense,
     nearest_expiry,
     receive_po_line,
     receive_stock,
+    reagent_test_links_map,
+    set_reagent_test_links,
+    stock_department,
     stock_on_hand,
 )
 from app.services.utils import next_number
@@ -28,27 +32,54 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 @router.get("/items")
 def items(
     warehouse_id: int | None = None,
+    department: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require("inventory", "inventory.read", "pharmacy", "pos", "nursing", "reports")),
 ):
-    rows = db.query(CatalogItem).filter(CatalogItem.is_stock == True).order_by(CatalogItem.name).all()  # noqa: E712
+    q = db.query(CatalogItem).filter(CatalogItem.is_stock == True)  # noqa: E712
+    if department:
+        try:
+            q = apply_department(q, department)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    rows = q.order_by(CatalogItem.name).all()
+    link_map = reagent_test_links_map(db, [r.id for r in rows]) if department == "lab" else {}
     out = []
     for r in rows:
         on_hand = stock_on_hand(db, r.id, warehouse_id)
         exp = nearest_expiry(db, r.id, warehouse_id)
-        out.append({
+        row = {
             "item": r,
             "on_hand": on_hand,
             "nearest_expiry": str(exp) if exp else None,
             "is_low": on_hand <= r.min_stock,
-        })
+        }
+        if department == "lab":
+            row["lab_tests"] = link_map.get(r.id, [])
+        out.append(row)
     return out
+
+
+@router.get("/lab-tests")
+def list_billable_lab_tests(db: Session = Depends(get_db), _: User = Depends(require("inventory", "inventory.read", "lab"))):
+    """Billable lab panels/tests (not stock supplies) — for linking reagents on the Store counter."""
+    rows = (
+        db.query(CatalogItem)
+        .filter(CatalogItem.category == "lab", CatalogItem.is_active == True)  # noqa: E712
+        .order_by(CatalogItem.name)
+        .all()
+    )
+    return [{"id": r.id, "sku": r.sku, "name": r.name} for r in rows]
 
 
 @router.post("/medicines")
 def add_medicine(data: MedicineIn, db: Session = Depends(get_db), user: User = Depends(require("inventory", "po", "pos"))):
     try:
-        item = create_medicine(db, data.name, data.sku, data.barcode, data.price, data.cost, data.min_stock, user.id)
+        item = create_medicine(
+            db, data.name, data.sku, data.barcode, data.price, data.cost, data.min_stock, user.id, data.department,
+        )
+        if data.department == "lab" and data.lab_tests:
+            set_reagent_test_links(db, item.id, [(l.test_item_id, l.qty) for l in data.lab_tests])
         db.commit()
         db.refresh(item)
         return item
@@ -70,6 +101,13 @@ def update_medicine(item_id: int, data: MedicineUpdateIn, db: Session = Depends(
         item.cost = data.cost
     if data.min_stock is not None:
         item.min_stock = data.min_stock
+    if data.lab_tests is not None:
+        if item.department != "lab":
+            raise HTTPException(400, "lab_tests only applies to lab department items")
+        try:
+            set_reagent_test_links(db, item.id, [(l.test_item_id, l.qty) for l in data.lab_tests])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
     db.commit()
     db.refresh(item)
     return item
@@ -97,8 +135,18 @@ def receive_stock_batch(data: StockReceiveIn, db: Session = Depends(get_db), use
 
 
 @router.get("/alerts")
-def inventory_alerts(warehouse_id: int | None = None, db: Session = Depends(get_db), _: User = Depends(require("inventory", "pharmacy", "pos"))):
-    return alerts(db, warehouse_id)
+def inventory_alerts(
+    warehouse_id: int | None = None,
+    department: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("inventory", "pharmacy", "pos")),
+):
+    try:
+        if department:
+            stock_department(department)
+        return alerts(db, warehouse_id, department)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @router.get("/suppliers")
@@ -152,10 +200,23 @@ def list_po(db: Session = Depends(get_db), _: User = Depends(require("po", "inve
 
 
 @router.get("/batches")
-def list_batches(db: Session = Depends(get_db), _: User = Depends(require("inventory", "pharmacy"))):
+def list_batches(
+    department: str | None = None,
+    warehouse_id: int | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("inventory", "pharmacy")),
+):
     from app.models.inventory import StockBatch
 
-    rows = db.query(StockBatch).filter(StockBatch.qty > 0).order_by(StockBatch.id.desc()).limit(100).all()
+    q = db.query(StockBatch).join(CatalogItem).filter(StockBatch.qty > 0, CatalogItem.is_stock == True)  # noqa: E712
+    if warehouse_id:
+        q = q.filter(StockBatch.warehouse_id == warehouse_id)
+    if department:
+        try:
+            q = apply_department(q, department)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    rows = q.order_by(StockBatch.id.desc()).limit(100).all()
     out = []
     for b in rows:
         out.append({

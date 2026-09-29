@@ -12,7 +12,7 @@ COUNTER_DEFINITIONS = [
     {"key": "usg", "label": "USG", "subtitle": "Order ultrasound and enter findings"},
     {"key": "nurse", "label": "Nurse Station", "subtitle": "IPD vitals and nursing notes"},
     {"key": "ipd", "label": "IPD Beds", "subtitle": "Ward/bed grid — admitted patients at a glance"},
-    {"key": "store", "label": "Stock Management", "subtitle": "Stock in/out, warehouse, suppliers — shared across counters"},
+    {"key": "store", "label": "Stock Management", "subtitle": "Stock by department — Pharmacy, Lab, X-ray, USG"},
     {"key": "cashier", "label": "Cashier", "subtitle": "Collect payments and expenses"},
     {"key": "admin", "label": "Admin Panel", "subtitle": "Staff, ward/bed setup, owner reports"},
 ]

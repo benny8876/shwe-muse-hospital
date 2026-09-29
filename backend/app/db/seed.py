@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.models.accounting import LedgerAccount, PettyCash
-from app.models.catalog import CatalogItem, Promotion
+from app.models.catalog import CatalogItem, LabTestReagent, Promotion
 from app.models.clinical import Appointment, QueueToken
 from app.models.inventory import StockBatch, Supplier
 from app.models.ipd import Bed, Ward
@@ -261,4 +261,124 @@ def ensure_extra_seed(db: Session) -> None:
         if not item.department or item.department == "radiology":
             item.department = "xray"
 
+    _ensure_lab_reagents(db)
+
+    demo_doctor_specialties = {
+        "doctor2": "OG (Obstetrics & Gynecology)",
+        "doctor3": "Pediatrics",
+    }
+    for username, specialty in demo_doctor_specialties.items():
+        doc = db.query(User).filter(User.username == username, User.role == "doctor").first()
+        if doc and (not doc.specialty or doc.specialty == "General Medicine"):
+            doc.specialty = specialty
+
     db.commit()
+
+
+# Lab supplies (Store → Lab). Each billed test below consumes 3–4 of these.
+LAB_REAGENTS = [
+    ("LABS-SYR", "Syringe 5ml"),
+    ("LABS-EDTA", "EDTA tube"),
+    ("LABS-SST", "Serum gel tube"),
+    ("LABS-TIP", "Micropipette tip"),
+    ("LABS-SLIDE", "Glass slide"),
+    ("LABS-GLOVE", "Exam glove"),
+    ("LABS-URINE", "Urine container"),
+    ("LABS-STOOL", "Stool container"),
+    ("LABS-SPUTUM", "Sputum container"),
+    ("LABS-SEMEN", "Semen container"),
+    ("LABS-STRIP", "Urine strip"),
+    ("LABS-SALINE", "Normal saline"),
+    ("LABS-WIDAL", "Widal antigen kit"),
+    ("LABS-HCG", "Beta hCG cassette"),
+    ("LABS-HBSAG", "HBsAg cassette"),
+    ("LABS-HCV", "HCV cassette"),
+    ("LABS-HIV", "HIV cassette"),
+    ("LABS-VDRL", "VDRL reagent"),
+    ("LABS-ABO", "ABO / Rh reagent"),
+    ("LABS-CBC", "CBC reagent pack"),
+    ("LABS-GLU", "Glucose reagent"),
+    ("LABS-LFT", "LFT reagent pack"),
+    ("LABS-RFT", "RFT reagent pack"),
+    ("LABS-AFB", "AFB stain"),
+    ("LABS-ADA", "ADA reagent"),
+    ("LABS-CREAT", "Creatinine reagent"),
+    ("LABS-ALB", "Albumin reagent"),
+    ("LABS-PROT", "Protein reagent"),
+    ("LABS-WRIGHT", "Wright stain"),
+]
+
+# test sku -> (reagent sku, qty per test)
+LAB_RECIPES: dict[str, list[tuple[str, float]]] = {
+    "LAB-P01": [("LABS-EDTA", 1), ("LABS-SST", 1), ("LABS-TIP", 2), ("LABS-SYR", 1)],
+    "LAB-P02": [("LABS-SST", 1), ("LABS-URINE", 1), ("LABS-TIP", 2), ("LABS-SYR", 1)],
+    "LAB-P03": [("LABS-SST", 1), ("LABS-HBSAG", 1), ("LABS-HCV", 1), ("LABS-HIV", 1)],
+    "LAB-P04": [("LABS-EDTA", 1), ("LABS-ABO", 1), ("LABS-SLIDE", 1), ("LABS-TIP", 1)],
+    "LAB-P05": [("LABS-SST", 1), ("LABS-HCG", 1), ("LABS-TIP", 1), ("LABS-SYR", 1)],
+    "LAB-P06": [("LABS-URINE", 1), ("LABS-STRIP", 1), ("LABS-TIP", 1), ("LABS-GLOVE", 1)],
+    "LAB-P07": [("LABS-EDTA", 1), ("LABS-ABO", 1), ("LABS-HBSAG", 1), ("LABS-SYR", 1)],
+    "LAB-P08": [("LABS-SST", 1), ("LABS-VDRL", 1), ("LABS-SLIDE", 1), ("LABS-TIP", 1)],
+    "LAB-P09": [("LABS-SST", 1), ("LABS-WIDAL", 1), ("LABS-SLIDE", 1), ("LABS-TIP", 1)],
+    "LAB-P10": [("LABS-SEMEN", 1), ("LABS-SLIDE", 1), ("LABS-TIP", 1), ("LABS-GLOVE", 1)],
+    "LAB-P11": [("LABS-SPUTUM", 1), ("LABS-AFB", 1), ("LABS-SLIDE", 1), ("LABS-GLOVE", 1)],
+    "LAB-P12": [("LABS-STOOL", 1), ("LABS-SLIDE", 1), ("LABS-SALINE", 1), ("LABS-GLOVE", 1)],
+    "LAB-P13": [("LABS-SST", 1), ("LABS-ADA", 1), ("LABS-TIP", 2), ("LABS-SYR", 1)],
+    "LAB-P14": [("LABS-URINE", 1), ("LABS-ALB", 1), ("LABS-CREAT", 1), ("LABS-TIP", 2)],
+    "LAB-P15": [("LABS-URINE", 1), ("LABS-PROT", 1), ("LABS-CREAT", 1), ("LABS-TIP", 2)],
+    "LAB-P16": [("LABS-EDTA", 1), ("LABS-SLIDE", 1), ("LABS-WRIGHT", 1), ("LABS-TIP", 1)],
+    "LAB-CBC": [("LABS-EDTA", 1), ("LABS-CBC", 1), ("LABS-TIP", 1), ("LABS-SYR", 1)],
+    "LAB-FBS": [("LABS-SST", 1), ("LABS-GLU", 1), ("LABS-TIP", 1), ("LABS-SYR", 1)],
+    "LAB-LFT": [("LABS-SST", 1), ("LABS-LFT", 1), ("LABS-TIP", 2), ("LABS-SYR", 1)],
+    "LAB-RFT": [("LABS-SST", 1), ("LABS-RFT", 1), ("LABS-TIP", 2), ("LABS-SYR", 1)],
+    "LAB-UA": [("LABS-URINE", 1), ("LABS-STRIP", 1), ("LABS-GLOVE", 1), ("LABS-TIP", 1)],
+}
+
+
+def _ensure_lab_reagents(db: Session) -> None:
+    warehouse = db.query(Warehouse).order_by(Warehouse.id).first()
+    by_sku: dict[str, CatalogItem] = {}
+    for sku, name in LAB_REAGENTS:
+        item = db.query(CatalogItem).filter(CatalogItem.sku == sku).first()
+        if not item:
+            item = CatalogItem(
+                sku=sku,
+                barcode=sku,
+                name=name,
+                name_mm=name,
+                category="supply",
+                department="lab",
+                unit="ea",
+                price=0,
+                cost=500,
+                is_stock=True,
+                min_stock=15,
+            )
+            db.add(item)
+            db.flush()
+        by_sku[sku] = item
+        if warehouse and not db.query(StockBatch).filter(StockBatch.item_id == item.id).first():
+            db.add(StockBatch(
+                item_id=item.id,
+                warehouse_id=warehouse.id,
+                batch_no="LAB-DEMO",
+                expiry_date=date.today() + timedelta(days=365),
+                qty=120,
+                unit_cost=500,
+            ))
+
+    tests = {item.sku: item for item in db.query(CatalogItem).filter(CatalogItem.sku.in_(list(LAB_RECIPES))).all()}
+    for test_sku, rows in LAB_RECIPES.items():
+        test = tests.get(test_sku)
+        if not test:
+            continue
+        for reagent_sku, qty in rows:
+            reagent = by_sku.get(reagent_sku)
+            if not reagent:
+                continue
+            exists = (
+                db.query(LabTestReagent)
+                .filter(LabTestReagent.test_item_id == test.id, LabTestReagent.reagent_item_id == reagent.id)
+                .first()
+            )
+            if not exists:
+                db.add(LabTestReagent(test_item_id=test.id, reagent_item_id=reagent.id, qty=qty))

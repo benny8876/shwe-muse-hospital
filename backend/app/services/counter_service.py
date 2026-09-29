@@ -1,14 +1,15 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import case, func
+from sqlalchemy import case, exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.accounting import Expense
 from app.models.ancillary import LabOrder, RadiologyOrder
 from app.models.billing import Invoice, InvoiceLine, Payment
-from app.models.catalog import CatalogItem
+from app.models.catalog import CatalogItem, LabTestReagent
 from app.models.clinical import QueueToken, Visit
-from app.models.ipd import Admission, Bed, Ward
+from app.models.ipd import Admission, Bed, Ward, WardMedOrder
+from app.models.org import Warehouse
 from app.models.patients import Patient
 from app.models.users import User
 from app.services.billing_service import add_line, create_invoice, recalc_invoice
@@ -30,6 +31,70 @@ def get_open_invoice(db: Session, patient_id: int, branch_id: int, kind: str | N
     return q.order_by(Invoice.id.desc()).first()
 
 
+def resolve_open_invoice(
+    db: Session,
+    *,
+    patient_id: int,
+    branch_id: int,
+    invoice_id: int | None = None,
+    admission_id: int | None = None,
+) -> Invoice:
+    """Pick the bill pharmacy/nurse actions should hit — OPD vs IPD must not mix."""
+    open_status = ["draft", "open", "partial"]
+    if invoice_id:
+        inv = db.get(Invoice, invoice_id)
+        if not inv or inv.patient_id != patient_id or inv.branch_id != branch_id:
+            raise ValueError("Bill not found for this patient")
+        if inv.status not in open_status:
+            raise ValueError("Bill is no longer open")
+        return inv
+    if admission_id:
+        inv = (
+            db.query(Invoice)
+            .filter(
+                Invoice.admission_id == admission_id,
+                Invoice.branch_id == branch_id,
+                Invoice.status.in_(open_status),
+            )
+            .order_by(Invoice.id.desc())
+            .first()
+        )
+        if inv:
+            return inv
+        raise ValueError("No open IPD bill for this admission")
+    inv = get_open_invoice(db, patient_id, branch_id, kind="opd")
+    if inv:
+        return inv
+    inv = (
+        db.query(Invoice)
+        .filter(
+            Invoice.patient_id == patient_id,
+            Invoice.branch_id == branch_id,
+            Invoice.admission_id.is_(None),
+            Invoice.kind.in_(["opd", "pos"]),
+            Invoice.status.in_(open_status),
+        )
+        .order_by(Invoice.id.desc())
+        .first()
+    )
+    if inv:
+        return inv
+    inv = get_open_invoice(db, patient_id, branch_id)
+    if inv:
+        return inv
+    raise ValueError("No open bill — patient must register at Reception first")
+
+
+def resolve_ward_order_invoice(db: Session, order: WardMedOrder) -> Invoice:
+    return resolve_open_invoice(
+        db,
+        patient_id=order.patient_id,
+        branch_id=order.branch_id,
+        invoice_id=order.invoice_id,
+        admission_id=order.admission_id,
+    )
+
+
 def reception_register(
     db: Session,
     *,
@@ -45,6 +110,8 @@ def reception_register(
     deposit: float = 0,
     billing_mode: str = "daily",
     age_years: int | None = None,
+    age_months: int | None = None,
+    age_days: int | None = None,
     address: str = "",
     father_name: str = "",
     referring_doctor: str = "",
@@ -60,12 +127,18 @@ def reception_register(
     else:
         if not name.strip():
             raise ValueError("Patient name required")
+        if age_months is not None and not 0 <= age_months <= 11:
+            raise ValueError("Months must be between 0 and 11")
+        if age_days is not None and not 0 <= age_days <= 30:
+            raise ValueError("Days must be between 0 and 30")
         patient = Patient(
             uhid=next_number(db, "uhid", "ID-"),
             name=name.strip(),
             phone=phone,
             gender=gender,
             age_years=age_years,
+            age_months=age_months,
+            age_days=age_days,
             address=address,
             father_name=father_name.strip(),
             referring_doctor=referring_doctor,
@@ -235,14 +308,13 @@ def pharmacy_charge(
     qty: float,
     user_id: int,
     prescription_item_id: int | None = None,
+    invoice_id: int | None = None,
 ) -> dict:
     item = db.get(CatalogItem, item_id)
     if not item or not item.is_stock:
         raise ValueError("Medicine not found")
 
-    inv = get_open_invoice(db, patient_id, branch_id)
-    if not inv:
-        raise ValueError("No open bill — patient must register at Reception first")
+    inv = resolve_open_invoice(db, patient_id=patient_id, branch_id=branch_id, invoice_id=invoice_id)
 
     picks = dispense(db, item, warehouse_id, qty, f"inv-{inv.id}", user_id)
     doctor = db.get(User, inv.doctor_id) if inv.doctor_id else None
@@ -422,18 +494,87 @@ def doctor_examine(
     return {"visit": visit, "prescription": rx}
 
 
-def lab_order(db: Session, *, branch_id: int, patient_id: int, item_id: int, user_id: int) -> dict:
+def lab_walk_in(
+    db: Session,
+    *,
+    branch_id: int,
+    name: str,
+    phone: str = "",
+    gender: str = "",
+    age_years: int | None = None,
+    age_months: int | None = None,
+    age_days: int | None = None,
+    referring_doctor: str = "",
+    user_id: int,
+) -> dict:
+    """A walk-in customer testing at Lab without Reception — patient + open lab invoice."""
+    if not name.strip():
+        raise ValueError("Patient name required")
+    if age_months is not None and not 0 <= age_months <= 11:
+        raise ValueError("Months must be between 0 and 11")
+    if age_days is not None and not 0 <= age_days <= 30:
+        raise ValueError("Days must be between 0 and 30")
+    if age_years is not None and age_years < 0:
+        raise ValueError("Years must be 0 or more")
+    patient = Patient(
+        uhid=next_number(db, "uhid", "ID-"),
+        name=name.strip(),
+        phone=phone.strip(),
+        gender=gender.strip(),
+        age_years=age_years,
+        age_months=age_months,
+        age_days=age_days,
+        referring_doctor=referring_doctor.strip(),
+    )
+    db.add(patient)
+    db.flush()
+    inv = create_invoice(db, branch_id, patient.id, kind="lab")
+    db.flush()
+    recalc_invoice(inv, db)
+    audit(db, user_id, "lab_walk_in", "patient", str(patient.id), f"inv={inv.id}")
+    return {"patient": patient, "invoice": inv}
+
+
+def _consume_lab_reagents(db: Session, *, test_item_id: int, branch_id: int, user_id: int, ref: str) -> None:
+    """Pull the test's linked supplies (3–4 reagents) from the branch store."""
+    rows = db.query(LabTestReagent).filter(LabTestReagent.test_item_id == test_item_id).all()
+    if not rows:
+        return
+    warehouse = (
+        db.query(Warehouse)
+        .filter(Warehouse.branch_id == branch_id)
+        .order_by(Warehouse.is_default.desc(), Warehouse.id)
+        .first()
+    )
+    if not warehouse:
+        raise ValueError("No store warehouse for lab reagents")
+    for row in rows:
+        reagent = db.get(CatalogItem, row.reagent_item_id)
+        if not reagent or not reagent.is_stock:
+            raise ValueError("Lab reagent is not a stock item")
+        need = float(row.qty or 1)
+        try:
+            dispense(db, reagent, warehouse.id, need, ref, user_id)
+        except ValueError as e:
+            raise ValueError(f"Insufficient stock: {reagent.name} (need {need:g})") from e
+
+
+def lab_order(db: Session, *, branch_id: int, patient_id: int, item_id: int, user_id: int, invoice_id: int | None = None) -> dict:
     from app.models.ancillary import LabOrder
 
     item = db.get(CatalogItem, item_id)
     if not item or item.category != "lab":
         raise ValueError("Lab test not found")
 
-    inv = get_open_invoice(db, patient_id, branch_id)
-    if not inv:
-        inv = create_invoice(db, branch_id, patient_id, kind="lab")
+    if invoice_id:
+        inv = resolve_open_invoice(db, patient_id=patient_id, branch_id=branch_id, invoice_id=invoice_id)
+    else:
+        inv = get_open_invoice(db, patient_id, branch_id)
+        if not inv:
+            inv = create_invoice(db, branch_id, patient_id, kind="lab")
 
     doctor = db.get(User, inv.doctor_id) if inv.doctor_id else None
+    _consume_lab_reagents(db, test_item_id=item.id, branch_id=branch_id, user_id=user_id, ref=f"lab-{patient_id}")
     add_line(db, inv, item, 1, item.price, "lab", item.name, doctor)
     order = LabOrder(
         patient_id=patient_id,
@@ -937,13 +1078,11 @@ def _cashier_analytics_since(db: Session, branch_id: int, *, since: datetime, un
     }
 
 
-def list_doctors(db: Session) -> list[User]:
-    return (
-        db.query(User)
-        .filter(User.role == "doctor", User.is_active == True)  # noqa: E712
-        .order_by(User.full_name)
-        .all()
-    )
+def list_doctors(db: Session, specialty: str | None = None) -> list[User]:
+    q = db.query(User).filter(User.role == "doctor", User.is_active == True)  # noqa: E712
+    if specialty and specialty.strip():
+        q = q.filter(User.specialty == specialty.strip())
+    return q.order_by(User.full_name).all()
 
 
 def create_doctor(
@@ -1081,6 +1220,123 @@ def update_service_item(
         item.is_active = is_active
     audit(db, user_id, "service_item_update", "catalog_item", str(item.id), item.name)
     return item
+
+
+def search_patient_records(
+    db: Session,
+    *,
+    branch_id: int,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    kind: str = "",
+    source: str = "",
+    q: str = "",
+    limit: int = 50,
+) -> list[dict]:
+    """Find patients whose visits match date / visit type / service category / item text.
+
+    source is the counter category: opd, pharmacy, lab, xray, usg.
+    q matches a billed line description, or a lab test name when looking at lab.
+    """
+    item_q = q.strip()
+    kind = kind.strip().lower()
+    source = source.strip().lower()
+    if source and source not in ("opd", "pharmacy", "lab", "xray", "usg"):
+        raise ValueError("source must be opd, pharmacy, lab, xray, or usg")
+    if not any([date_from, date_to, kind, source, item_q]):
+        raise ValueError("At least one filter is required")
+
+    query = (
+        db.query(Invoice)
+        .options(joinedload(Invoice.lines), joinedload(Invoice.patient))
+        .filter(Invoice.patient_id.isnot(None), Invoice.branch_id == branch_id)
+    )
+    if date_from:
+        query = query.filter(Invoice.created_at >= datetime.combine(date_from, time.min))
+    if date_to:
+        query = query.filter(Invoice.created_at < datetime.combine(date_to + timedelta(days=1), time.min))
+    if kind:
+        query = query.filter(Invoice.kind == kind)
+
+    like = f"%{item_q}%" if item_q else None
+    if source == "lab":
+        line = exists().where(InvoiceLine.invoice_id == Invoice.id, InvoiceLine.source == "lab")
+        if like:
+            line = exists().where(
+                InvoiceLine.invoice_id == Invoice.id,
+                InvoiceLine.source == "lab",
+                InvoiceLine.description.ilike(like),
+            )
+            lab = exists().where(LabOrder.invoice_id == Invoice.id, LabOrder.tests.ilike(like))
+            query = query.filter(or_(line, lab))
+        else:
+            query = query.filter(line)
+    elif source == "pharmacy":
+        conds = [InvoiceLine.invoice_id == Invoice.id, InvoiceLine.source == "pharmacy"]
+        if like:
+            conds.append(InvoiceLine.description.ilike(like))
+        query = query.filter(exists().where(*conds))
+    elif source == "opd":
+        conds = [InvoiceLine.invoice_id == Invoice.id, InvoiceLine.source == "opd"]
+        if like:
+            conds.append(InvoiceLine.description.ilike(like))
+        query = query.filter(exists().where(*conds))
+    elif source in ("xray", "usg"):
+        conds = [RadiologyOrder.invoice_id == Invoice.id, RadiologyOrder.modality == source]
+        query = query.filter(exists().where(*conds))
+        if like:
+            query = query.filter(
+                exists().where(
+                    InvoiceLine.invoice_id == Invoice.id,
+                    InvoiceLine.description.ilike(like),
+                )
+            )
+    elif like:
+        query = query.filter(
+            or_(
+                exists().where(InvoiceLine.invoice_id == Invoice.id, InvoiceLine.description.ilike(like)),
+                exists().where(LabOrder.invoice_id == Invoice.id, LabOrder.tests.ilike(like)),
+            )
+        )
+
+    seen_ids: set[int] = set()
+    invoices = []
+    for inv in query.order_by(Invoice.created_at.desc()).limit(400).all():
+        if inv.id in seen_ids:
+            continue
+        seen_ids.add(inv.id)
+        invoices.append(inv)
+    grouped: dict[int, dict] = {}
+    for inv in invoices:
+        patient = inv.patient
+        if not patient:
+            continue
+        row = grouped.get(patient.id)
+        if row is None:
+            if len(grouped) >= limit:
+                continue
+            row = {
+                "patient_id": patient.id,
+                "name": patient.name,
+                "uhid": patient.uhid,
+                "phone": patient.phone or "",
+                "father_name": patient.father_name or "",
+                "match_count": 0,
+                "last_visit": inv.created_at.isoformat() if inv.created_at else None,
+                "matches": [],
+            }
+            grouped[patient.id] = row
+        row["match_count"] += 1
+        snippets = [line.description for line in inv.lines if line.description]
+        if source:
+            wanted = "radiology" if source in ("xray", "usg") else source
+            snippets = [line.description for line in inv.lines if line.source == wanted and line.description]
+        if like:
+            snippets = [s for s in snippets if item_q.lower() in s.lower()] or snippets[:1]
+        for snippet in snippets:
+            if snippet not in row["matches"] and len(row["matches"]) < 3:
+                row["matches"].append(snippet)
+    return list(grouped.values())
 
 
 _SOURCE_LABELS = {

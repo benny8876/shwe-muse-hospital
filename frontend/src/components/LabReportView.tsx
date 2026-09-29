@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { getApiError } from '../lib/api'
 import { useToast } from '../lib/toast'
-import { formatDate } from '../lib/format'
+import { formatAge, formatDate } from '../lib/format'
 import { findLabTemplate } from '../lib/labTemplates'
 import LabTemplateResult, { type LabResultValues } from './LabTemplateResult'
 import letterhead from '../assets/letterhead.png'
@@ -11,6 +11,8 @@ type LabOrderDetail = {
   patient_name: string
   uhid: string
   age_years: number | null
+  age_months?: number | null
+  age_days?: number | null
   gender: string
   tests: string
   result: string
@@ -57,7 +59,9 @@ export default function LabReportView({ orderId }: { orderId: string | number })
         readOnly
         patientName={order.patient_name}
         uhid={order.uhid}
-        age={order.age_years}
+        age={formatAge(order.age_years, order.age_months, order.age_days)}
+        ageYears={order.age_years}
+        ageMonths={order.age_months}
         gender={order.gender}
         date={order.created_at}
         sampleId={order.sample_id}

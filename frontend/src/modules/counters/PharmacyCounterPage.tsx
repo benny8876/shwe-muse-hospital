@@ -7,7 +7,7 @@ import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import Alert from '../../components/Alert'
 import Modal from '../../components/Modal'
-import { formatDate, formatMoney } from '../../lib/format'
+import { formatAge, formatDate, formatMoney } from '../../lib/format'
 
 type ActivePatient = {
   patient_id: number
@@ -67,15 +67,16 @@ export default function PharmacyCounterPage() {
 
   const loadItems = useCallback(async () => {
     try {
-      const { data } = await api.get('/inventory/items')
+      const params: Record<string, string | number> = { department: 'pharmacy' }
+      if (warehouseId) params.warehouse_id = Number(warehouseId)
+      const { data } = await api.get('/inventory/items', { params })
       setItems(data)
     } catch (e) {
       toast.error(getApiError(e))
     }
-  }, [toast])
+  }, [toast, warehouseId])
 
   useEffect(() => {
-    void loadItems()
     api.get('/inventory/warehouses').then((r) => {
       setWarehouses(r.data)
       if (r.data[0]) setWarehouseId(String(r.data[0].id))
@@ -83,7 +84,19 @@ export default function PharmacyCounterPage() {
     void loadActive()
     const id = setInterval(() => { void loadActive() }, 8000)
     return () => clearInterval(id)
-  }, [loadActive, loadItems, toast])
+  }, [loadActive, toast])
+
+  useEffect(() => {
+    if (!warehouseId) return
+    void loadItems()
+  }, [warehouseId, loadItems])
+
+  // Keep on-hand numbers current on the Sale tab without push notifications.
+  useEffect(() => {
+    if (tab !== 'sale' || !warehouseId) return
+    const id = setInterval(() => { void loadItems() }, 30000)
+    return () => clearInterval(id)
+  }, [tab, warehouseId, loadItems])
 
   const loadHistory = useCallback(async () => {
     try {
@@ -108,13 +121,13 @@ export default function PharmacyCounterPage() {
     if (tab === 'wardOrders') { void loadWardOrders() }
   }, [tab, loadHistory, loadWardOrders])
 
-  // Ward Orders queue is nurse-initiated and can arrive any time, so poll it
-  // like the active-patients list rather than requiring a manual refresh.
+  // Ward Orders queue is nurse-initiated and can arrive any time — poll on Sale
+  // too so the tab badge stays current when pharmacists stay on dispense.
   useEffect(() => {
-    if (tab !== 'wardOrders') return
+    void loadWardOrders()
     const id = setInterval(() => { void loadWardOrders() }, 8000)
     return () => clearInterval(id)
-  }, [tab, loadWardOrders])
+  }, [loadWardOrders])
 
   // Ctrl/Cmd+Enter confirms & dispenses the staged cart from anywhere on the
   // Sale tab, so the keyboard-only add loop (search → Enter → qty → Enter)
@@ -144,7 +157,7 @@ export default function PharmacyCounterPage() {
     setBusy(true)
     try {
       const [invoiceRes, detailRes] = await Promise.all([
-        api.get(`/counter/patient/${p.patient_id}/invoice`, { params: { branch_id: branchId } }),
+        api.get(`/counter/patient/${p.patient_id}/invoice`, { params: { branch_id: branchId, invoice_id: p.invoice_id } }),
         api.get(`/patients/${p.patient_id}`).catch(() => null),
       ])
       setInvoice(invoiceRes.data)
@@ -180,6 +193,16 @@ export default function PharmacyCounterPage() {
     )
   })
   const visibleItems = filteredItems.slice(0, 12)
+
+  const lowStockWarnings = cart.flatMap((c) => {
+    const row = items.find((i) => i.item.id === c.item_id)
+    if (!row) return []
+    const remaining = row.on_hand - c.qty
+    if (remaining <= row.item.min_stock) {
+      return [{ name: c.name, on_hand: row.on_hand, after: remaining, min: row.item.min_stock }]
+    }
+    return []
+  })
 
   // Medicines already dispensed to the selected patient this visit. Pharmacy
   // shows unit_price/amount here (unlike most of the app being Cashier-facing
@@ -318,6 +341,7 @@ export default function PharmacyCounterPage() {
         await api.post('/counter/pharmacy', {
           branch_id: branchId,
           patient_id: patient.patient_id,
+          invoice_id: patient.invoice_id,
           item_id: line.item_id,
           warehouse_id: Number(warehouseId),
           qty: line.qty,
@@ -333,7 +357,7 @@ export default function PharmacyCounterPage() {
       }
     }
     if (!failed) toast.success('Order confirmed & dispensed')
-    const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId } })
+    const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId, invoice_id: patient.invoice_id } })
     setInvoice(fresh.data)
     await loadActive()
     await loadItems()
@@ -536,7 +560,9 @@ export default function PharmacyCounterPage() {
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate text-sm">{r.item.name}</div>
-                      <div className="text-xs text-slate-500">{r.item.unit || 'ea'} · Stock {r.on_hand} · {formatMoney(Number(r.item.price))}</div>
+                      <div className={`text-xs ${r.is_low ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                        {r.item.unit || 'ea'} · Stock {r.on_hand}{r.is_low ? ' · LOW' : ''} · {formatMoney(Number(r.item.price))}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -555,6 +581,12 @@ export default function PharmacyCounterPage() {
           {/* Current Order — full width now that it no longer shares the row
               with Add Medicine, so it gets the most visual room. */}
           <div className="card space-y-3">
+            {lowStockWarnings.length > 0 && (
+              <Alert tone="warning">
+                <strong>Low stock warning:</strong>{' '}
+                {lowStockWarnings.map((w) => `${w.name} (${w.on_hand} → ${w.after}, min ${w.min})`).join(' · ')}
+              </Alert>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold text-slate-800">Current Order{patient ? ` — ${patient.name}` : ''}</h3>
               {cart.length > 0 && (
@@ -610,7 +642,7 @@ export default function PharmacyCounterPage() {
       {tab === 'wardOrders' && (
         <div className="card space-y-3">
           <div className="flex flex-wrap justify-between items-center gap-3">
-            <h3 className="font-semibold text-slate-800">Ward Orders — Nurse-requested medicine, all wards</h3>
+            <h3 className="font-semibold text-slate-800">Nurse Orders — OPD & IPD medicine requests</h3>
             <select className="input w-40" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
               {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
@@ -619,6 +651,7 @@ export default function PharmacyCounterPage() {
             rows={wardOrders}
             keyField="order_item_id"
             columns={[
+              { key: 'visit', label: 'Visit', render: (r) => <StatusBadge value={String(r.visit_type || 'OPD')} /> },
               { key: 'patient', label: 'Patient', render: (r) => `${r.patient_name} (${r.uhid})` },
               { key: 'medicine', label: 'Medicine', render: (r) => String(r.medicine_name) },
               { key: 'qty', label: 'Qty', className: 'text-right', render: (r) => String(r.qty) },
@@ -677,7 +710,7 @@ export default function PharmacyCounterPage() {
         <Modal title={`${patient.name} (${patient.uhid})`} onClose={() => setDetailOpen(false)} maxWidth="max-w-lg">
           {patientDetail && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm border-b border-slate-200 pb-3">
-              <div><span className="text-slate-500">Age:</span> <strong>{patientDetail.age_years ?? '—'}</strong></div>
+              <div><span className="text-slate-500">Age:</span> <strong>{formatAge(patientDetail.age_years, patientDetail.age_months, patientDetail.age_days)}</strong></div>
               <div><span className="text-slate-500">Gender:</span> <strong>{patientDetail.gender || '—'}</strong></div>
               <div><span className="text-slate-500">Phone:</span> <strong>{patientDetail.phone || '—'}</strong></div>
               {patientDetail.allergies && (

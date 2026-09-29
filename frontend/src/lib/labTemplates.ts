@@ -19,6 +19,9 @@ export type LabTemplate = {
   hasRange: boolean
   rows: LabRow[]
   footnotes?: string[]
+  // When set, footnotes stay off the printed page until the lab tech ticks
+  // the matching checkbox (General Physician's correlate / recollect lines).
+  footnotesOptional?: boolean
   // Some panels' printed footnotes include a "Confirmation will be
   // necessary." line that only applies when a screening test came back
   // positive — the lab tech ticks a checkbox when entering the result, and
@@ -154,6 +157,7 @@ export const LAB_TEMPLATES: LabTemplate[] = [
       'Please correlate with clinical condition.',
       'Recollected second sample if needed confirmation.',
     ],
+    footnotesOptional: true,
     hasConfirmationNote: true,
   },
   {
@@ -418,6 +422,117 @@ export const LAB_TEMPLATES: LabTemplate[] = [
     ],
   },
 ]
+
+export type PhysicianAgeBand = 'neonate' | 'infant' | 'toddler' | 'child' | 'adolescent' | 'adult'
+
+/** Neonate 0–2 mo, Infant 3–11 mo, Toddler 1–3 y, Child 4–12 y, Adolescent 13–17 y, Adult 18+. */
+export function physicianAgeBand(
+  ageYears: number | null | undefined,
+  ageMonths: number | null | undefined,
+): PhysicianAgeBand | null {
+  if (ageYears == null && ageMonths == null) return null
+  const years = ageYears ?? 0
+  const months = Math.min(11, Math.max(0, ageMonths ?? 0))
+  const totalMonths = years * 12 + (years < 1 ? months : 0)
+  if (years < 1 && totalMonths <= 2) return 'neonate'
+  if (years < 1) return 'infant'
+  if (years <= 3) return 'toddler'
+  if (years <= 12) return 'child'
+  if (years <= 17) return 'adolescent'
+  return 'adult'
+}
+
+function sex(gender?: string | null): 'M' | 'F' | null {
+  const g = (gender || '').trim().toLowerCase()
+  if (g === 'm' || g === 'male') return 'M'
+  if (g === 'f' || g === 'female') return 'F'
+  return null
+}
+
+const BAND_LABEL: Record<PhysicianAgeBand, string> = {
+  neonate: 'Neonate',
+  infant: 'Infant',
+  toddler: 'Toddler',
+  child: 'Child',
+  adolescent: 'Adolescent',
+  adult: 'Adult',
+}
+
+function labeled(who: string, range: string) {
+  return `${who}: ${range}`
+}
+
+/** Prefix Male/Female (and an age note such as "18-60" or "adult") so the printed range says who it belongs to. */
+function bySex(
+  gender: string | null | undefined,
+  male: string,
+  female: string,
+  both: string,
+  ageNote?: string,
+) {
+  const s = sex(gender)
+  if (s === 'M') return labeled(ageNote ? `Male ${ageNote}` : 'Male', male)
+  if (s === 'F') return labeled(ageNote ? `Female ${ageNote}` : 'Female', female)
+  return both
+}
+
+/** Age/sex reference for General Physician only. Other templates keep their static range. */
+export function physicianReferenceRange(
+  rowId: string,
+  ageYears: number | null | undefined,
+  ageMonths: number | null | undefined,
+  gender?: string | null,
+): string | null {
+  const band = physicianAgeBand(ageYears, ageMonths)
+  const years = ageYears ?? 0
+
+  if (rowId === 'esr') return bySex(gender, '3 - 5', '4 - 7', 'Male: 3-5 / Female: 4-7')
+  if (rowId === 'trig') return bySex(gender, '60 - 165', '40 - 140', 'Male: 60-165 / Female: 40-140')
+  if (rowId === 'hdl') return bySex(gender, '35 - 80', '42 - 88', 'Male: 35-80 / Female: 42-88')
+  if (rowId === 'sgpt') return bySex(gender, 'up to 45', 'up to 35', 'Male: up to 45 / Female: up to 35')
+  if (rowId === 'sgot') return bySex(gender, 'up to 35', 'up to 31', 'Male: up to 35 / Female: up to 31')
+
+  if (rowId === 'creatinine') {
+    if (!band) return null
+    if (band === 'neonate') return labeled('Neonate', '0.3 - 1.0')
+    if (band === 'infant') return labeled('Infant', '0.2 - 0.4')
+    if (band === 'toddler' || band === 'child') return labeled(BAND_LABEL[band], '0.3 - 0.7')
+    if (band === 'adolescent') return labeled('Adolescent', '0.5 - 1')
+    if (years > 90) return bySex(gender, '1 - 1.7', '0.6 - 1.3', 'Male 90+: 1-1.7 / Female 90+: 0.6-1.3', '90+')
+    if (years > 60) return bySex(gender, '0.8 - 1.3', '0.6 - 1.3', 'Male 60-90: 0.8-1.3 / Female 60-90: 0.6-1.3', '60-90')
+    return bySex(gender, '0.9 - 1.3', '0.6 - 1.2', 'Male 18-60: 0.9-1.3 / Female 18-60: 0.6-1.2', '18-60')
+  }
+
+  if (rowId === 'tbili') {
+    if (!band) return null
+    if (band === 'infant') return labeled('Infant', '0.2 - 8')
+    return labeled('Adult', 'up to 1.2')
+  }
+
+  if (rowId === 'alp') {
+    if (!band) return null
+    if (band === 'toddler' || band === 'child') return labeled(BAND_LABEL[band], '180 - 1200')
+    return bySex(gender, '80 - 306', '64 - 306', 'Male (adult): 80-306 / Female (adult): 64-306', '(adult)')
+  }
+
+  const childIron = band === 'toddler' || band === 'child'
+  if (rowId === 'ferritin') {
+    if (!band) return null
+    if (childIron) return labeled(BAND_LABEL[band], '15 - 150')
+    return bySex(gender, '20 - 250', '20 - 200', 'Male (adult): 20-250 / Female (adult): 20-200', '(adult)')
+  }
+  if (rowId === 'iron') {
+    if (!band) return null
+    if (childIron) return labeled(BAND_LABEL[band], '50 - 120')
+    return bySex(gender, '70 - 180', '60 - 180', 'Male (adult): 70-180 / Female (adult): 60-180', '(adult)')
+  }
+  if (rowId === 'tibc') {
+    if (!band) return null
+    if (childIron) return labeled(BAND_LABEL[band], '240 - 450')
+    return bySex(gender, '171 - 505', '149 - 492', 'Male (adult): 171-505 / Female (adult): 149-492', '(adult)')
+  }
+  return null
+}
 
 export function findLabTemplate(testName: string): LabTemplate | undefined {
   return LAB_TEMPLATES.find((t) => t.name === testName)

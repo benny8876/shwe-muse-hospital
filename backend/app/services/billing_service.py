@@ -143,6 +143,38 @@ def pay_invoice_multi(db: Session, inv: Invoice, payments: list, user_id: int, s
     return created
 
 
+IPD_DEPOSIT_METHODS = frozenset({"deposit", "cash", "kpay", "wave", "kbzpay", "card"})
+
+
+def collect_ipd_deposit(
+    db: Session,
+    *,
+    admission_id: int,
+    amount: float,
+    method: str,
+    user_id: int,
+    shift_id: int | None = None,
+) -> tuple[Invoice, Admission]:
+    from app.services.utils import audit
+
+    adm = db.get(Admission, admission_id)
+    if not adm:
+        raise ValueError("Admission not found")
+    if adm.status not in ("admitted", "transferred"):
+        raise ValueError("Patient is not an active IPD admission")
+    m = (method or "deposit").lower()
+    if m not in IPD_DEPOSIT_METHODS:
+        raise ValueError("Invalid payment method for IPD deposit")
+    inv = db.query(Invoice).filter(Invoice.admission_id == admission_id, Invoice.kind == "ipd").order_by(Invoice.id.desc()).first()
+    if not inv:
+        raise ValueError("No IPD invoice for this admission")
+    pay_invoice(db, inv, m, float(amount), user_id, shift_id, allow_overpay=True)
+    adm.deposit = float(adm.deposit or 0) + float(amount)
+    audit(db, user_id, "ipd_deposit", "admission", str(admission_id), f"{m} amount={amount}")
+    db.flush()
+    return inv, adm
+
+
 def create_invoice(db: Session, branch_id: int, patient_id: int | None, kind: str = "opd", doctor_id: int | None = None):
     inv = Invoice(
         number=next_number(db, "invoice", "INV-"),

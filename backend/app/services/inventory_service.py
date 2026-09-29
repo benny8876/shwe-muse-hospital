@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.catalog import CatalogItem
+from app.models.catalog import CatalogItem, LabTestReagent
 from app.models.inventory import StockBatch, StockMovement, WastageLog
 from app.services.utils import audit
 
@@ -72,10 +72,45 @@ def receive_stock(
     return batch
 
 
-def create_medicine(db: Session, name: str, sku: str, barcode: str, price: float, cost: float, min_stock: float, user_id: int | None):
+STOCK_DEPARTMENTS = ("pharmacy", "lab", "xray", "usg")
+# Seeded medicines use department="drug"; later ones use "pharmacy".
+PHARMACY_DEPARTMENTS = ("pharmacy", "drug")
+_SKU_PREFIX = {"pharmacy": "MED-", "lab": "LABS-", "xray": "XRS-", "usg": "USGS-"}
+_CATEGORY = {"pharmacy": "drug", "lab": "supply", "xray": "supply", "usg": "supply"}
+
+
+def stock_department(value: str | None) -> str:
+    dept = (value or "pharmacy").strip().lower()
+    if dept not in STOCK_DEPARTMENTS:
+        raise ValueError("department must be pharmacy, lab, xray, or usg")
+    return dept
+
+
+def apply_department(query, department: str | None):
+    """Limit a CatalogItem query to one Store segment. pharmacy includes legacy department=drug."""
+    if not department:
+        return query
+    dept = stock_department(department)
+    if dept == "pharmacy":
+        return query.filter(CatalogItem.department.in_(PHARMACY_DEPARTMENTS))
+    return query.filter(CatalogItem.department == dept)
+
+
+def create_medicine(
+    db: Session,
+    name: str,
+    sku: str,
+    barcode: str,
+    price: float,
+    cost: float,
+    min_stock: float,
+    user_id: int | None,
+    department: str = "pharmacy",
+):
     from app.services.utils import next_number
 
-    code = sku.strip() or next_number(db, "sku", "MED-")
+    dept = stock_department(department)
+    code = sku.strip() or next_number(db, f"sku_{dept}", _SKU_PREFIX[dept])
     if db.query(CatalogItem).filter(CatalogItem.sku == code).first():
         raise ValueError("SKU already exists")
     item = CatalogItem(
@@ -83,8 +118,8 @@ def create_medicine(db: Session, name: str, sku: str, barcode: str, price: float
         barcode=barcode or code,
         name=name.strip(),
         name_mm=name.strip(),
-        category="drug",
-        department="pharmacy",
+        category=_CATEGORY[dept],
+        department=dept,
         price=price,
         cost=cost,
         min_stock=min_stock,
@@ -94,6 +129,49 @@ def create_medicine(db: Session, name: str, sku: str, barcode: str, price: float
     db.flush()
     audit(db, user_id, "medicine_create", "catalog_item", str(item.id), name)
     return item
+
+
+def set_reagent_test_links(db: Session, reagent_item_id: int, links: list[tuple[int, float]]) -> None:
+    """Reagent-centric recipe: which billable lab tests consume this supply, and how much per run."""
+    reagent = db.get(CatalogItem, reagent_item_id)
+    if not reagent or not reagent.is_stock or reagent.department != "lab":
+        raise ValueError("Lab stock item not found")
+    cleaned: list[tuple[int, float]] = []
+    seen_tests: set[int] = set()
+    for test_id, qty in links:
+        if test_id in seen_tests:
+            continue
+        seen_tests.add(test_id)
+        if qty <= 0:
+            raise ValueError("Qty per test must be positive")
+        test = db.get(CatalogItem, test_id)
+        if not test or test.category != "lab" or test.is_stock:
+            raise ValueError("Invalid lab test for recipe link")
+        cleaned.append((test_id, qty))
+    db.query(LabTestReagent).filter(LabTestReagent.reagent_item_id == reagent_item_id).delete()
+    for test_id, qty in cleaned:
+        db.add(LabTestReagent(test_item_id=test_id, reagent_item_id=reagent_item_id, qty=qty))
+
+
+def reagent_test_links_map(db: Session, reagent_ids: list[int]) -> dict[int, list[dict]]:
+    if not reagent_ids:
+        return {}
+    rows = (
+        db.query(LabTestReagent, CatalogItem)
+        .join(CatalogItem, LabTestReagent.test_item_id == CatalogItem.id)
+        .filter(LabTestReagent.reagent_item_id.in_(reagent_ids))
+        .order_by(CatalogItem.name)
+        .all()
+    )
+    out: dict[int, list[dict]] = {}
+    for link, test in rows:
+        out.setdefault(link.reagent_item_id, []).append({
+            "test_item_id": test.id,
+            "test_sku": test.sku,
+            "test_name": test.name,
+            "qty": link.qty,
+        })
+    return out
 
 
 def nearest_expiry(db: Session, item_id: int, warehouse_id: int | None = None) -> date | None:
@@ -119,12 +197,14 @@ def receive_po_line(db: Session, item_id: int, warehouse_id: int, batch_no: str,
     return batch
 
 
-def alerts(db: Session, warehouse_id: int | None = None):
+def alerts(db: Session, warehouse_id: int | None = None, department: str | None = None):
     today = date.today()
     near = today + timedelta(days=30)
-    q = db.query(StockBatch).join(CatalogItem)
+    q = db.query(StockBatch).join(CatalogItem).filter(CatalogItem.is_stock == True)  # noqa: E712
     if warehouse_id:
         q = q.filter(StockBatch.warehouse_id == warehouse_id)
+    if department:
+        q = apply_department(q, department)
     batches = q.all()
     low, near_exp, expired = [], [], []
     seen = set()
@@ -140,6 +220,16 @@ def alerts(db: Session, warehouse_id: int | None = None):
                 expired.append({"batch_id": b.id, "item": item.name, "batch_no": b.batch_no, "expiry": str(b.expiry_date), "qty": b.qty})
             elif b.expiry_date <= near:
                 near_exp.append({"batch_id": b.id, "item": item.name, "batch_no": b.batch_no, "expiry": str(b.expiry_date), "qty": b.qty})
+    # Items that have never been received still count as low stock.
+    items_q = db.query(CatalogItem).filter(CatalogItem.is_stock == True, CatalogItem.is_active == True)  # noqa: E712
+    if department:
+        items_q = apply_department(items_q, department)
+    for item in items_q.all():
+        if item.id in seen:
+            continue
+        total = stock_on_hand(db, item.id, warehouse_id)
+        if total <= item.min_stock:
+            low.append({"item_id": item.id, "name": item.name, "qty": total, "min": item.min_stock})
     return {"low_stock": low, "near_expiry": near_exp, "expired": expired}
 
 

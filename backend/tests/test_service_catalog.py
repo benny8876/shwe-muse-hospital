@@ -34,6 +34,29 @@ def test_cashier_can_create_hide_and_show_service_item(client, cashier_headers, 
     assert any(i["id"] == item["id"] for i in lab_items)
 
 
+def test_doctors_filter_by_specialty(client, cashier_headers):
+    r = client.post(
+        "/api/v1/counter/doctors",
+        json={
+            "full_name": "Dr. OG Demo",
+            "consultation_fee": 12000,
+            "specialty": "OG (Obstetrics & Gynecology)",
+        },
+        params={"branch_id": 1},
+        headers=cashier_headers,
+    )
+    assert r.status_code == 200
+
+    all_docs = client.get("/api/v1/doctors", headers=cashier_headers).json()
+    og_docs = client.get(
+        "/api/v1/doctors",
+        params={"specialty": "OG (Obstetrics & Gynecology)"},
+        headers=cashier_headers,
+    ).json()
+    assert len(og_docs) < len(all_docs)
+    assert any(d["full_name"] == "Dr. OG Demo" for d in og_docs)
+
+
 def test_empty_name_rejected(client, cashier_headers):
     r = client.post(
         "/api/v1/counter/services",

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -26,6 +26,18 @@ class CatalogItem(Base):
     package_items: Mapped[str] = mapped_column(Text, default="")  # json list of item ids
     min_stock: Mapped[float] = mapped_column(Float, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class LabTestReagent(Base):
+    """How many of each lab supply a billed test consumes. One test, several reagents."""
+
+    __tablename__ = "lab_test_reagents"
+    __table_args__ = (UniqueConstraint("test_item_id", "reagent_item_id", name="uq_lab_test_reagent"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    test_item_id: Mapped[int] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    reagent_item_id: Mapped[int] = mapped_column(ForeignKey("catalog_items.id"), index=True)
+    qty: Mapped[float] = mapped_column(Float, default=1)
 
 
 class Promotion(Base):

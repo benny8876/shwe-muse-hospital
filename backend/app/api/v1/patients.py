@@ -61,8 +61,11 @@ def get_patient(patient_id: int, db: Session = Depends(get_db), _: User = Depend
 
 
 @router.get("/doctors")
-def doctors(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return db.query(User).filter(User.role == "doctor", User.is_active == True).all()  # noqa: E712
+def doctors(specialty: str | None = None, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    q = db.query(User).filter(User.role == "doctor", User.is_active == True)  # noqa: E712
+    if specialty and specialty.strip():
+        q = q.filter(User.specialty == specialty.strip())
+    return q.order_by(User.full_name).all()
 
 
 @router.post("/appointments")

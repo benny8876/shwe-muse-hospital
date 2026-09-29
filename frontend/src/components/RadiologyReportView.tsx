@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { getApiError } from '../lib/api'
 import { useToast } from '../lib/toast'
+import { formatAge } from '../lib/format'
 import { parseRadiologyFindings } from '../lib/radiologyReport'
 import ResultSlip from './ResultSlip'
 
@@ -9,6 +10,8 @@ type RadiologyOrderDetail = {
   patient_name: string
   uhid: string
   age_years: number | null
+  age_months?: number | null
+  age_days?: number | null
   gender: string
   modality: string
   findings: string
@@ -43,7 +46,7 @@ export default function RadiologyReportView({ orderId }: { orderId: string | num
       title={title}
       patientName={order.patient_name}
       uhid={order.uhid}
-      age={order.age_years}
+      age={formatAge(order.age_years, order.age_months, order.age_days)}
       gender={order.gender}
       date={order.created_at}
       bodyLabel="Findings"

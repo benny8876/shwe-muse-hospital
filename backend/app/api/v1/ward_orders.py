@@ -4,24 +4,63 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.deps import require
 from app.db.session import get_db
 from app.models.catalog import CatalogItem
-from app.models.ipd import WardMedOrder, WardMedOrderItem
+from app.models.billing import Invoice
+from app.models.ipd import Admission, WardMedOrder, WardMedOrderItem
 from app.models.patients import Patient
 from app.models.users import User
 from app.schemas.actions import WardMedOrderIn
-from app.services.counter_service import pharmacy_charge
+from app.services.counter_service import pharmacy_charge, resolve_open_invoice, resolve_ward_order_invoice
 from app.services.utils import audit
 
 router = APIRouter(prefix="/ward-orders", tags=["ward-orders"])
+
+
+def _pin_invoice_id(db: Session, data: WardMedOrderIn) -> int | None:
+    if data.invoice_id:
+        try:
+            inv = resolve_open_invoice(
+                db,
+                patient_id=data.patient_id,
+                branch_id=data.branch_id,
+                invoice_id=data.invoice_id,
+                admission_id=data.admission_id,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        if data.admission_id and inv.admission_id != data.admission_id:
+            raise HTTPException(400, "Bill does not match this admission")
+        return inv.id
+    if data.admission_id:
+        adm = db.get(Admission, data.admission_id)
+        if not adm or adm.patient_id != data.patient_id:
+            raise HTTPException(400, "Admission not found for this patient")
+        try:
+            inv = resolve_open_invoice(
+                db,
+                patient_id=data.patient_id,
+                branch_id=data.branch_id,
+                admission_id=data.admission_id,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return inv.id
+    try:
+        inv = resolve_open_invoice(db, patient_id=data.patient_id, branch_id=data.branch_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return inv.id
 
 
 @router.post("")
 def create_order(data: WardMedOrderIn, db: Session = Depends(get_db), user: User = Depends(require("nursing", "ipd"))):
     if not data.items:
         raise HTTPException(400, "Add at least one medicine")
+    invoice_id = _pin_invoice_id(db, data)
     order = WardMedOrder(
         patient_id=data.patient_id,
         branch_id=data.branch_id,
         admission_id=data.admission_id,
+        invoice_id=invoice_id,
         ordered_by=user.id,
         note=data.note,
     )
@@ -59,12 +98,19 @@ def pending_items(branch_id: int, db: Session = Depends(get_db), _: User = Depen
     out = []
     for item, order, patient, catalog_item in rows:
         nurse = db.get(User, order.ordered_by)
+        visit_type = "IPD" if order.admission_id else "OPD"
+        if order.invoice_id:
+            inv = db.get(Invoice, order.invoice_id)
+            if inv and inv.kind:
+                visit_type = inv.kind.upper()
         out.append({
             "order_id": order.id,
             "order_item_id": item.id,
             "patient_id": patient.id,
             "patient_name": patient.name,
             "uhid": patient.uhid,
+            "visit_type": visit_type,
+            "invoice_id": order.invoice_id,
             "catalog_item_id": catalog_item.id,
             "medicine_name": catalog_item.name,
             "qty": item.qty,
@@ -112,6 +158,10 @@ def dispense_item(order_item_id: int, warehouse_id: int, db: Session = Depends(g
         raise HTTPException(404, "Order item not found or already handled")
     order = db.get(WardMedOrder, order_item.order_id)
     try:
+        inv = resolve_ward_order_invoice(db, order)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    try:
         result = pharmacy_charge(
             db,
             branch_id=order.branch_id,
@@ -120,6 +170,7 @@ def dispense_item(order_item_id: int, warehouse_id: int, db: Session = Depends(g
             warehouse_id=warehouse_id,
             qty=order_item.qty,
             user_id=user.id,
+            invoice_id=inv.id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

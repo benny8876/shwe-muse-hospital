@@ -1,3 +1,6 @@
+from tests.conftest import register_patient
+
+
 def _available_bed_id(client, admin_headers) -> int:
     r = client.get("/api/v1/ipd/beds", headers=admin_headers)
     r.raise_for_status()
@@ -85,6 +88,39 @@ def test_ipd_deposit_covering_room_charge_keeps_invoice_open_for_pharmacy(client
     assert r.status_code == 200
 
 
+def test_nurse_can_order_medicine_for_opd_patient_and_pharmacy_can_dispense(client, auth_headers, reception_headers, pharmacy_headers, doctor_id):
+    nurse_headers = auth_headers("nurse")
+    result = register_patient(client, reception_headers, doctor_id, "OPD Ward Order Patient")
+    patient_id = result["patient"]["id"]
+    opd_invoice_id = result["invoice_id"]
+
+    item = next(row for row in client.get("/api/v1/inventory/items", headers=nurse_headers).json() if row["item"]["sku"] == "PARA500")
+
+    r = client.post(
+        "/api/v1/ward-orders",
+        json={
+            "patient_id": patient_id,
+            "branch_id": 1,
+            "invoice_id": opd_invoice_id,
+            "note": "OPD fever",
+            "items": [{"item_id": item["item"]["id"], "qty": 1}],
+        },
+        headers=nurse_headers,
+    )
+    assert r.status_code == 200
+    order_item_id = r.json()["items"][0]["id"]
+
+    r = client.get("/api/v1/ward-orders/pending", params={"branch_id": 1}, headers=pharmacy_headers)
+    row = next(p for p in r.json() if p["order_item_id"] == order_item_id)
+    assert row["visit_type"] == "OPD"
+    assert row["invoice_id"] == opd_invoice_id
+
+    warehouse_id = client.get("/api/v1/inventory/warehouses", headers=pharmacy_headers).json()[0]["id"]
+    r = client.post(f"/api/v1/ward-orders/items/{order_item_id}/dispense", params={"warehouse_id": warehouse_id}, headers=pharmacy_headers)
+    assert r.status_code == 200
+    assert r.json()["invoice_id"] == opd_invoice_id
+
+
 def test_nurse_can_order_medicine_for_ward_patient_and_pharmacy_can_dispense(client, auth_headers, reception_headers, admin_headers, doctor_id):
     nurse_headers = auth_headers("nurse")
     pharmacy_headers = auth_headers("pharmacy")
@@ -138,6 +174,7 @@ def test_nurse_can_order_medicine_for_ward_patient_and_pharmacy_can_dispense(cli
     assert r.status_code == 200
     row = next(p for p in r.json() if p["order_item_id"] == order_item_id)
     assert row["patient_id"] == patient_id
+    assert row["visit_type"] == "IPD"
     assert row["qty"] == 2
     assert row["note"] == "BP high"
 
@@ -158,3 +195,143 @@ def test_nurse_can_order_medicine_for_ward_patient_and_pharmacy_can_dispense(cli
     # dispensing the same order item twice is rejected, not double-billed
     r = client.post(f"/api/v1/ward-orders/items/{order_item_id}/dispense", params={"warehouse_id": warehouse_id}, headers=pharmacy_headers)
     assert r.status_code == 404
+
+
+def test_ipd_daily_charge_and_discharge(client, auth_headers, reception_headers, admin_headers, doctor_id):
+    nurse_headers = auth_headers("nurse")
+    bed_id = _available_bed_id(client, admin_headers)
+
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Discharge Flow Patient",
+            "phone": "09-000-444",
+            "gender": "M",
+            "patient_type": "ipd",
+            "bed_id": bed_id,
+            "deposit": 0,
+            "billing_mode": "daily",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    admission_id = r.json()["admission_id"]
+    patient_id = r.json()["patient"]["id"]
+
+    r = client.post(f"/api/v1/ipd/admissions/{admission_id}/daily-charge", headers=nurse_headers)
+    assert r.status_code == 200
+    assert r.json()["total"] > 0
+
+    r = client.post(
+        f"/api/v1/ipd/admissions/{admission_id}/vitals",
+        json={"bp": "120/80", "pulse": "72"},
+        headers=nurse_headers,
+    )
+    assert r.status_code == 200
+
+    r = client.post(
+        f"/api/v1/ipd/admissions/{admission_id}/discharge",
+        json={"summary": "Stable, follow up OPD"},
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["admission"]["status"] == "discharged"
+    assert body["admission"]["discharge_summary"] == "Stable, follow up OPD"
+    assert body["invoice"]["balance"] >= 0
+
+    r = client.get("/api/v1/ipd/beds", headers=admin_headers)
+    bed = next(b for b in r.json() if b["id"] == bed_id)
+    assert bed["status"] == "available"
+
+    r = client.get("/api/v1/ipd/admissions", params={"branch_id": 1, "status": "admitted"}, headers=nurse_headers)
+    assert all(a["id"] != admission_id for a in r.json())
+
+    r = client.post(f"/api/v1/ipd/admissions/{admission_id}/daily-charge", headers=nurse_headers)
+    assert r.status_code == 400
+
+
+def test_ipd_mid_stay_deposit_via_cashier_allows_overpay(client, auth_headers, reception_headers, pharmacy_headers, admin_headers, doctor_id):
+    cashier_headers = auth_headers("cashier")
+    bed_id = _available_bed_id(client, admin_headers)
+
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Mid Stay Deposit Patient",
+            "phone": "09-000-555",
+            "gender": "F",
+            "patient_type": "ipd",
+            "bed_id": bed_id,
+            "deposit": 50000,
+            "billing_mode": "daily",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    admission_id = r.json()["admission_id"]
+    patient_id = r.json()["patient"]["id"]
+
+    r = client.get(f"/api/v1/counter/patient/{patient_id}/invoice", params={"branch_id": 1}, headers=cashier_headers)
+    assert r.status_code == 200
+    inv = r.json()
+    invoice_id = inv["id"]
+    assert inv["admission_id"] == admission_id
+
+    r = client.post(
+        f"/api/v1/invoices/{invoice_id}/ipd-deposit",
+        json={"amount": 150000, "method": "cash"},
+        headers=cashier_headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["paid"] >= 200000
+    assert body["status"] in ("partial", "open")
+    assert body["balance"] <= 0.01 or body["status"] == "partial"
+
+    r = client.get("/api/v1/counter/active-patients", params={"branch_id": 1}, headers=pharmacy_headers)
+    assert any(row["patient_id"] == patient_id for row in r.json())
+
+    r = client.post(
+        f"/api/v1/ipd/admissions/{admission_id}/deposit",
+        json={"amount": 25000, "method": "kpay"},
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["paid"] >= 225000
+
+    adm = client.get("/api/v1/ipd/admissions", params={"branch_id": 1, "status": "admitted"}, headers=auth_headers("nurse")).json()
+    row = next(a for a in adm if a["id"] == admission_id)
+    assert row["deposit"] >= 225000
+
+
+def test_open_invoices_lists_ipd_with_zero_balance_while_admitted(client, auth_headers, reception_headers, admin_headers, doctor_id):
+    cashier_headers = auth_headers("cashier")
+    bed_id = _available_bed_id(client, admin_headers)
+
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Open List IPD Zero Due",
+            "phone": "09-000-666",
+            "gender": "M",
+            "patient_type": "ipd",
+            "bed_id": bed_id,
+            "deposit": 500000,
+            "billing_mode": "daily",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    patient_id = r.json()["patient"]["id"]
+
+    r = client.get("/api/v1/counter/open-invoices", params={"branch_id": 1}, headers=cashier_headers)
+    assert r.status_code == 200
+    ids = [inv["patient_id"] for inv in r.json()]
+    assert patient_id in ids

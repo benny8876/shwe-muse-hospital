@@ -1,4 +1,5 @@
-import type { LabTemplate } from '../lib/labTemplates'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { physicianReferenceRange, type LabRow, type LabTemplate } from '../lib/labTemplates'
 import { formatDate } from '../lib/format'
 import letterhead from '../assets/letterhead.png'
 
@@ -16,7 +17,9 @@ type Props = {
   onChange: (values: LabResultValues) => void
   patientName: string
   uhid: string
-  age?: number | null
+  age?: number | string | null
+  ageYears?: number | null
+  ageMonths?: number | null
   gender?: string
   doctorName?: string
   date?: string | null
@@ -38,9 +41,263 @@ function setField(values: LabResultValues, onChange: Props['onChange'], id: stri
 const includeKey = (id: string) => `${id}__inc`
 const remarkKey = (id: string) => `${id}__remark`
 
-export default function LabTemplateResult({ template, values, onChange, patientName, uhid, age, gender, doctorName, date, sampleId, readOnly }: Props) {
+const QUICK_TESTS: { label: string; ids: string[] }[] = [
+  { label: 'ESR', ids: ['esr'] },
+  { label: 'Creatinine', ids: ['creatinine'] },
+  { label: 'Electrolyte', ids: ['sodium', 'potassium', 'chloride', 'bicarb'] },
+  { label: 'Lipid', ids: ['tchol', 'trig', 'hdl', 'ldl'] },
+  { label: 'LFT', ids: ['tbili', 'alp', 'sgpt', 'sgot'] },
+  { label: 'HbA1C', ids: ['hba1c'] },
+  { label: 'Thyroid', ids: ['ft3', 'ft4', 'tsh'] },
+  { label: 'CRP', ids: ['crp_quant'] },
+]
+
+type PhysicianGroup = {
+  key: string
+  label: string
+  items: Extract<LabRow, { kind: 'row' }>[]
+}
+
+function physicianGroups(rows: LabRow[]): PhysicianGroup[] {
+  const groups: PhysicianGroup[] = []
+  let current: PhysicianGroup | null = null
+  for (const r of rows) {
+    if (r.kind === 'section') {
+      current = { key: r.label, label: r.label, items: [] }
+      groups.push(current)
+    } else if (r.kind === 'row') {
+      if (!current) {
+        current = { key: '__general', label: 'တစ်ခုချင်း Test', items: [] }
+        groups.push(current)
+      }
+      current.items.push(r)
+    }
+  }
+  return groups
+}
+
+function PhysicianEntry({
+  template,
+  values,
+  onChange,
+  rangeFor,
+  editCols,
+}: {
+  template: LabTemplate
+  values: LabResultValues
+  onChange: (values: LabResultValues) => void
+  rangeFor: (id: string, fallback?: string) => string
+  editCols: number
+}) {
+  const [query, setQuery] = useState('')
+  const [mode, setMode] = useState<'all' | 'selected'>(() => (
+    template.rows.some((r) => r.kind === 'row' && values[includeKey(r.id)] === 'yes') ? 'selected' : 'all'
+  ))
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const groups = useMemo(() => physicianGroups(template.rows), [template])
+  const q = query.trim().toLowerCase()
+  const searching = q.length > 0
+  const selectedOnly = mode === 'selected' && !searching
+
+  const selectedCount = template.rows.filter((r) => r.kind === 'row' && values[includeKey(r.id)] === 'yes').length
+
+  useEffect(() => {
+    if (!focusId) return
+    document.getElementById(`lab-res-${focusId}`)?.focus()
+    setFocusId(null)
+  }, [focusId])
+
+  function checked(id: string) {
+    return values[includeKey(id)] === 'yes'
+  }
+
+  function matches(label: string, section: string) {
+    if (!q) return true
+    return label.toLowerCase().includes(q) || section.toLowerCase().includes(q)
+  }
+
+  function toggleSection(key: string) {
+    setOpen((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }))
+  }
+
+  function setAllOpen(next: boolean) {
+    const state: Record<string, boolean> = {}
+    for (const g of groups) state[g.key] = next
+    setOpen(state)
+  }
+
+  const allOpen = groups.length > 0 && groups.every((g) => open[g.key])
+
+  function applyQuick(ids: string[]) {
+    const allOn = ids.every((id) => checked(id))
+    const next = { ...values }
+    for (const id of ids) next[includeKey(id)] = allOn ? '' : 'yes'
+    onChange(next)
+    if (!allOn) {
+      setMode('selected')
+      setQuery('')
+      setFocusId(ids[0])
+    }
+  }
+
+  const visible = groups.map((g) => {
+    const items = g.items.filter((r) => {
+      if (selectedOnly && !checked(r.id)) return false
+      return matches(r.label, g.label)
+    })
+    const sectionChecked = g.items.filter((r) => checked(r.id)).length
+    const forcedOpen = searching || selectedOnly
+    return {
+      ...g,
+      items,
+      sectionChecked,
+      expanded: items.length > 0 && (forcedOpen || (open[g.key] ?? false)),
+    }
+  }).filter((g) => g.items.length > 0)
+
+  const firstVisibleId = visible.find((g) => g.expanded)?.items[0]?.id
+
+  return (
+    <div className="no-print card overflow-hidden p-0">
+      <div className="border-b border-slate-200 bg-white p-3 space-y-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            className="input min-w-[14rem] flex-1"
+            placeholder="Test ရှာပါ — ESR, Creatinine, SGPT…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && firstVisibleId) {
+                e.preventDefault()
+                document.getElementById(`lab-res-${firstVisibleId}`)?.focus()
+              }
+            }}
+          />
+          <div className="flex gap-1">
+            <button type="button" className={`btn btn-sm ${mode === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('all')}>
+              အားလုံး
+            </button>
+            <button type="button" className={`btn btn-sm ${mode === 'selected' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setMode('selected'); setQuery('') }}>
+              ရွေးထားတာ ({selectedCount})
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-slate-500 mr-1">အမြန်ရွေး</span>
+          {QUICK_TESTS.map((chip) => {
+            const on = chip.ids.every((id) => checked(id))
+            return (
+              <button
+                key={chip.label}
+                type="button"
+                className={`btn btn-sm ${on ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => applyQuick(chip.ids)}
+              >
+                {chip.label}
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+          <span>
+            {searching
+              ? `“${query.trim()}” နဲ့ ကိုက်တာ ပြနေသည်`
+              : 'Result ရိုက်ရင် print မှာ အလိုအလျောက် ပါမည်'}
+          </span>
+          {mode === 'all' && !searching && (
+            <button type="button" className="underline" onClick={() => setAllOpen(!allOpen)}>
+              {allOpen ? 'အားလုံးပိတ်' : 'အားလုံးဖွင့်'}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="max-h-[32rem] overflow-auto">
+        {visible.length === 0 ? (
+          <div className="px-3 py-8 text-center text-sm text-slate-500">
+            {searching ? `“${query.trim()}” နဲ့ ကိုက်တဲ့ test မရှိပါ` : 'အမြန်ရွေး နှိပ်ပါ၊ သို့မဟုတ် အားလုံး ထဲက test ရှာပါ'}
+          </div>
+        ) : (
+          <table className="w-full text-sm border-collapse">
+            <thead className="sticky top-0 z-10">
+              <tr className="text-left" style={{ background: LAB_HEADER_BG }}>
+                <th className="px-2 py-2 font-semibold text-white text-xs uppercase text-center" title="Include in print">✓</th>
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Test Description</th>
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Result</th>
+                {template.hasUnit && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Unit</th>}
+                {template.hasRange && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Reference Range</th>}
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Remark</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((g) => {
+                const total = groups.find((x) => x.key === g.key)?.items.length ?? g.items.length
+                return (
+                <Fragment key={g.key}>
+                  <tr style={{ background: LAB_SECTION_BG }}>
+                    <td colSpan={editCols} className="p-0">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-3 py-1.5 text-left font-semibold text-slate-700"
+                        onClick={() => { if (!searching && !selectedOnly) toggleSection(g.key) }}
+                      >
+                        <span>{searching || selectedOnly ? g.label : `${g.expanded ? '▾' : '▸'} ${g.label}`}</span>
+                        <span className="text-xs font-normal text-slate-600">{g.sectionChecked}/{total}</span>
+                      </button>
+                    </td>
+                  </tr>
+                  {g.expanded && g.items.map((r) => (
+                    <tr key={r.id} className={`border-b border-slate-100 ${searching ? 'bg-amber-50' : ''}`}>
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={checked(r.id)}
+                          onChange={(e) => setField(values, onChange, includeKey(r.id), e.target.checked ? 'yes' : '')}
+                        />
+                      </td>
+                      <td className="px-3 py-2">{r.label}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          id={`lab-res-${r.id}`}
+                          className="input !py-1"
+                          value={(values[r.id] as string) || ''}
+                          onChange={(e) => {
+                            const next = { ...values, [r.id]: e.target.value }
+                            if (e.target.value.trim()) next[includeKey(r.id)] = 'yes'
+                            onChange(next)
+                          }}
+                        />
+                      </td>
+                      {template.hasUnit && <td className="px-3 py-2 text-slate-500">{r.unit || '—'}</td>}
+                      {template.hasRange && <td className="px-3 py-2 text-slate-500">{rangeFor(r.id, r.range)}</td>}
+                      <td className="px-3 py-2">
+                        <input
+                          className="input !py-1"
+                          placeholder={r.remark || '—'}
+                          value={(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}
+                          onChange={(e) => setField(values, onChange, remarkKey(r.id), e.target.value)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
+              )})}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function LabTemplateResult({ template, values, onChange, patientName, uhid, age, ageYears, ageMonths, gender, doctorName, date, sampleId, readOnly }: Props) {
   const cols = 2 + (template.hasUnit ? 1 : 0) + (template.hasRange ? 1 : 0) + 1
   const editCols = cols + 1
+  const physician = template.name === 'General Physician Panel'
+  function rangeFor(id: string, fallback?: string) {
+    if (!physician) return fallback || '—'
+    return physicianReferenceRange(id, ageYears, ageMonths, gender) || fallback || '—'
+  }
 
   // A section header only prints if at least one row under it (before the
   // next section) is checked — otherwise an empty "Electrolyte" band with
@@ -64,8 +321,13 @@ export default function LabTemplateResult({ template, values, onChange, patientN
         <button type="button" className="btn btn-secondary" onClick={() => window.print()}>Print (A4)</button>
       </div>
 
-      {/* Editable entry form */}
-      {!readOnly && (
+      {/* Editable entry form. General Physician is long enough that browsing
+          the full table is the slow part — search, quick-add, and a selected-only
+          view sit on top of the same include-in-print checkboxes. */}
+      {!readOnly && physician && (
+        <PhysicianEntry template={template} values={values} onChange={onChange} rangeFor={rangeFor} editCols={editCols} />
+      )}
+      {!readOnly && !physician && (
       <div className="no-print card overflow-auto p-0">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -177,7 +439,7 @@ export default function LabTemplateResult({ template, values, onChange, patientN
                     <input className="input !py-1" value={(values[r.id] as string) || ''} onChange={(e) => setField(values, onChange, r.id, e.target.value)} />
                   </td>
                   {template.hasUnit && <td className="px-3 py-2 text-slate-500">{r.unit || '—'}</td>}
-                  {template.hasRange && <td className="px-3 py-2 text-slate-500">{r.range || '—'}</td>}
+                  {template.hasRange && <td className="px-3 py-2 text-slate-500">{rangeFor(r.id, r.range)}</td>}
                   <td className="px-3 py-2">
                     <input
                       className="input !py-1"
@@ -192,6 +454,17 @@ export default function LabTemplateResult({ template, values, onChange, patientN
           </tbody>
         </table>
       </div>
+      )}
+
+      {!readOnly && template.footnotesOptional && (
+        <label className="no-print card flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={values.clinical_footnotes === 'yes'}
+            onChange={(e) => setField(values, onChange, 'clinical_footnotes', e.target.checked ? 'yes' : '')}
+          />
+          Print &quot;Please correlate with clinical condition.&quot; / &quot;Recollected second sample if needed confirmation.&quot;
+        </label>
       )}
 
       {!readOnly && template.hasConfirmationNote && (
@@ -299,16 +572,16 @@ export default function LabTemplateResult({ template, values, onChange, patientN
                   <td className="border border-slate-300 px-2 py-1">{r.label}</td>
                   <td className="border border-slate-300 px-2 py-1 font-semibold">{(values[r.id] as string) || ''}</td>
                   {template.hasUnit && <td className="border border-slate-300 px-2 py-1">{r.unit || ''}</td>}
-                  {template.hasRange && <td className="border border-slate-300 px-2 py-1">{r.range || ''}</td>}
+                  {template.hasRange && <td className="border border-slate-300 px-2 py-1">{(() => { const range = rangeFor(r.id, r.range); return range === '—' ? '' : range })()}</td>}
                   <td className="border border-slate-300 px-2 py-1">{(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}</td>
                 </tr>
               )
             })}
           </tbody>
         </table>
-        {(template.footnotes || (template.hasConfirmationNote && values.confirmation_needed === 'yes')) && (
+        {((template.footnotes && (!template.footnotesOptional || values.clinical_footnotes === 'yes')) || (template.hasConfirmationNote && values.confirmation_needed === 'yes')) && (
           <div className="text-xs italic text-slate-600 mb-6">
-            {template.footnotes?.map((f) => <div key={f}>{f}</div>)}
+            {(!template.footnotesOptional || values.clinical_footnotes === 'yes') && template.footnotes?.map((f) => <div key={f}>{f}</div>)}
             {template.hasConfirmationNote && values.confirmation_needed === 'yes' && <div>Confirmation will be necessary.</div>}
           </div>
         )}

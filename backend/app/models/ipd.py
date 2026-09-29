@@ -85,6 +85,7 @@ class WardMedOrder(Base):
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
     branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
     admission_id: Mapped[int | None] = mapped_column(ForeignKey("admissions.id"), nullable=True)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
     ordered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

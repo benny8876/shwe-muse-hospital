@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api, { getApiError } from '../../lib/api'
 import { useToast } from '../../lib/toast'
 import { useBranchId } from '../../hooks/useBranchId'
@@ -7,10 +7,10 @@ import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import ResultSlip from '../../components/ResultSlip'
 import LabTemplateResult, { type LabResultValues } from '../../components/LabTemplateResult'
+import LabReportView from '../../components/LabReportView'
 import Alert from '../../components/Alert'
 import Modal from '../../components/Modal'
-import SelectableCard from '../../components/SelectableCard'
-import { formatDate } from '../../lib/format'
+import { formatAge, formatDate } from '../../lib/format'
 import { findLabTemplate, LAB_TEMPLATES } from '../../lib/labTemplates'
 
 type ActivePatient = {
@@ -39,10 +39,21 @@ type LabOrderRow = {
 
 type CartLine = { item_id: number; name: string; sku: string; qty: number }
 
+function localISODate(d: Date) {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+function daysAgoISO(days: number) {
+  const d = new Date()
+  d.setDate(d.getDate() - days)
+  return localISODate(d)
+}
+
 export default function LabCounterPage() {
   const branchId = useBranchId()
   const toast = useToast()
-  const [tab, setTab] = useState<'order' | 'results'>('order')
+  const [tab, setTab] = useState<'order' | 'results' | 'history'>('order')
   const [listQuery, setListQuery] = useState('')
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
@@ -62,7 +73,30 @@ export default function LabCounterPage() {
   const [templateValues, setTemplateValues] = useState<LabResultValues>({})
   const [selectedOrder, setSelectedOrder] = useState<LabOrderRow | null>(null)
   const [selectedPatientDetail, setSelectedPatientDetail] = useState<any>(null)
+  const [resultPatient, setResultPatient] = useState<{ patient_id: number; name: string; uhid: string } | null>(null)
+  const [resultQuery, setResultQuery] = useState('')
+  const [resultSearchResults, setResultSearchResults] = useState<any[]>([])
+  const [resultListQuery, setResultListQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [walkInOpen, setWalkInOpen] = useState(false)
+  const [walkInForm, setWalkInForm] = useState({
+    name: '',
+    phone: '',
+    gender: 'F',
+    age_years: '',
+    age_months: '',
+    age_days: '',
+    referring_doctor: '',
+  })
+  const [historyFilters, setHistoryFilters] = useState({
+    date_from: daysAgoISO(30),
+    date_to: localISODate(new Date()),
+    status: 'all',
+    test: '',
+    q: '',
+  })
+  const [history, setHistory] = useState<LabOrderRow[]>([])
+  const [historyOrderId, setHistoryOrderId] = useState<number | null>(null)
   const selectedTemplate = selectedOrder ? findLabTemplate(selectedOrder.tests) : undefined
 
   const loadActive = useCallback(async () => {
@@ -74,6 +108,17 @@ export default function LabCounterPage() {
     }
   }, [branchId, toast])
 
+  const loadHistory = useCallback(async () => {
+    try {
+      const { data } = await api.get('/counter/lab/history', {
+        params: { branch_id: branchId, ...historyFilters },
+      })
+      setHistory(data)
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }, [branchId, historyFilters, toast])
+
   const loadOrders = useCallback(async () => {
     try {
       const { data } = await api.get('/counter/lab-orders', { params: { branch_id: branchId, status: 'all' } })
@@ -82,6 +127,13 @@ export default function LabCounterPage() {
       toast.error(getApiError(e))
     }
   }, [branchId, toast])
+
+  useEffect(() => {
+    if (tab === 'history') void loadHistory()
+    // Open the tab with the current filters. Later edits wait for Search,
+    // so typing in the name box does not fire a request per keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   useEffect(() => {
     api.get('/counter/lab-items').then((r) => setLabItems(r.data)).catch((e) => toast.error(getApiError(e)))
@@ -123,13 +175,33 @@ export default function LabCounterPage() {
 
   const pendingOrders = orders.filter((o) => o.status !== 'completed')
 
+  const patientsWithOrders = useMemo(() => {
+    const seen = new Map<number, { patient_id: number; name: string; uhid: string }>()
+    for (const o of orders) {
+      if (!seen.has(o.patient_id)) {
+        seen.set(o.patient_id, { patient_id: o.patient_id, name: o.patient_name, uhid: o.uhid })
+      }
+    }
+    return Array.from(seen.values())
+  }, [orders])
+
+  const filteredResultPatients = patientsWithOrders.filter((p) => {
+    const q = resultListQuery.trim().toLowerCase()
+    if (!q) return true
+    return p.name.toLowerCase().includes(q) || p.uhid.toLowerCase().includes(q)
+  })
+
+  const patientOrders = resultPatient
+    ? orders.filter((o) => o.patient_id === resultPatient.patient_id)
+    : []
+
   async function selectPatient(p: ActivePatient) {
     setPatient(p)
     setCart([])
     setBusy(true)
     try {
       const [invoiceRes, detailRes] = await Promise.all([
-        api.get(`/counter/patient/${p.patient_id}/invoice`, { params: { branch_id: branchId } }),
+        api.get(`/counter/patient/${p.patient_id}/invoice`, { params: { branch_id: branchId, invoice_id: p.invoice_id } }),
         api.get(`/patients/${p.patient_id}`).catch(() => null),
       ])
       setInvoice(invoiceRes.data)
@@ -232,6 +304,51 @@ export default function LabCounterPage() {
     setCart((prev) => prev.filter((c) => c.item_id !== itemId))
   }
 
+  async function submitWalkIn() {
+    if (!walkInForm.name.trim()) return toast.error('နာမည် ထည့်ပါ')
+    const months = walkInForm.age_months === '' ? null : Number(walkInForm.age_months)
+    const days = walkInForm.age_days === '' ? null : Number(walkInForm.age_days)
+    const years = walkInForm.age_years === '' ? (months != null || days != null ? 0 : null) : Number(walkInForm.age_years)
+    setBusy(true)
+    try {
+      const { data } = await api.post('/counter/lab/walk-in', {
+        branch_id: branchId,
+        name: walkInForm.name.trim(),
+        phone: walkInForm.phone.trim(),
+        gender: walkInForm.gender,
+        age_years: years,
+        age_months: months,
+        age_days: days,
+        referring_doctor: walkInForm.referring_doctor.trim(),
+      })
+      toast.success(`Walk-in patient created — ${data.uhid}`)
+      setWalkInOpen(false)
+      setWalkInForm({ name: '', phone: '', gender: 'F', age_years: '', age_months: '', age_days: '', referring_doctor: '' })
+      setPatient({
+        patient_id: data.patient_id,
+        name: data.name,
+        uhid: data.uhid,
+        invoice_id: data.invoice_id,
+        invoice_number: data.invoice_number,
+        invoice_kind: data.invoice_kind,
+        total: data.total,
+        balance: data.balance,
+      })
+      setCart([])
+      const [inv, detail] = await Promise.all([
+        api.get(`/counter/patient/${data.patient_id}/invoice`, { params: { branch_id: branchId, invoice_id: data.invoice_id } }),
+        api.get(`/patients/${data.patient_id}`).catch(() => null),
+      ])
+      setInvoice(inv.data)
+      setPatientDetail(detail?.data || null)
+      await loadActive()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const confirmOrder = useCallback(async () => {
     if (!patient) return toast.error('လူနာ ရွေးပါ')
     if (cart.length === 0) return
@@ -242,6 +359,7 @@ export default function LabCounterPage() {
         await api.post('/counter/lab', {
           branch_id: branchId,
           patient_id: patient.patient_id,
+          invoice_id: patient.invoice_id,
           item_id: line.item_id,
         })
         setCart((prev) => prev.filter((c) => c.item_id !== line.item_id))
@@ -252,7 +370,7 @@ export default function LabCounterPage() {
       }
     }
     if (!failed) toast.success('Tests confirmed & ordered')
-    const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId } })
+    const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId, invoice_id: patient.invoice_id } })
     setInvoice(fresh.data)
     await Promise.all([loadActive(), loadOrders()])
     setBusy(false)
@@ -306,9 +424,45 @@ export default function LabCounterPage() {
     }
   }
 
+  async function searchResultPatient() {
+    if (!resultQuery.trim()) return
+    setBusy(true)
+    try {
+      const { data } = await api.get('/patients', { params: { q: resultQuery } })
+      setResultSearchResults(data)
+      if (!data.length) toast.error('Patient not found')
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function pickResultPatient(p: { patient_id?: number; id?: number; name: string; uhid: string }) {
+    const patientId = p.patient_id ?? p.id!
+    setResultPatient({ patient_id: patientId, name: p.name, uhid: p.uhid })
+    setResultQuery('')
+    setResultSearchResults([])
+    const matches = orders.filter((o) => o.patient_id === patientId)
+    const first = matches.find((o) => o.status !== 'completed') ?? matches[0]
+    if (first) selectOrder(first)
+    else setSelectedOrder(null)
+  }
+
+  function changeResultPatient() {
+    setResultPatient(null)
+    setSelectedOrder(null)
+    setResultQuery('')
+    setResultSearchResults([])
+  }
+
   return (
     <div>
-      <Tabs tabs={[{ id: 'order', label: 'Order Test' }, { id: 'results', label: `Results (${pendingOrders.length} pending)` }]} active={tab} onChange={(t) => setTab(t as any)} />
+      <Tabs tabs={[
+        { id: 'order', label: 'Order Test' },
+        { id: 'results', label: `Results (${pendingOrders.length} pending)` },
+        { id: 'history', label: 'History' },
+      ]} active={tab} onChange={(t) => setTab(t as 'order' | 'results' | 'history')} />
 
       {tab === 'order' && (
         <div className="space-y-4">
@@ -340,6 +494,7 @@ export default function LabCounterPage() {
                 <div className="flex gap-2">
                   <input className="input" placeholder="Search name / ID / father / phone" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
                   <button type="button" disabled={busy} className="btn btn-secondary btn-sm shrink-0" onClick={search}>Go</button>
+                  <button type="button" className="btn btn-secondary btn-sm shrink-0" onClick={() => setWalkInOpen(true)}>+ Walk-in</button>
                 </div>
                 {searchResults.length > 0 && (
                   <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
@@ -389,15 +544,20 @@ export default function LabCounterPage() {
                     key={t.name}
                     type="button"
                     disabled={!patient || !item || busy}
-                    title={item ? undefined : 'Catalog item not found'}
                     className={`rounded-lg border px-2.5 py-2 text-left text-xs leading-snug transition-colors ${
                       patient && item
                         ? 'border-slate-300 hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)] cursor-pointer'
                         : 'border-slate-200 text-slate-400 cursor-not-allowed'
                     }`}
+                    title={!item ? 'Catalog item not found' : item.reagents?.length ? item.reagents.map((r: any) => `${r.name} ×${r.qty}`).join(', ') : undefined}
                     onClick={() => item && addToCart(item)}
                   >
-                    {t.name}
+                    <div>{t.name}</div>
+                    {item?.reagents?.length > 0 && (
+                      <div className="mt-1 text-[10px] leading-snug text-slate-500 line-clamp-2">
+                        {item.reagents.map((r: any) => r.name).join(' · ')}
+                      </div>
+                    )}
                   </button>
                 )
               })}
@@ -436,7 +596,11 @@ export default function LabCounterPage() {
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate text-sm">{item.name}</div>
-                      <div className="text-xs text-slate-500">{item.sku || '—'}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {item.reagents?.length
+                          ? item.reagents.map((r: any) => `${r.name} ×${r.qty}`).join(' · ')
+                          : (item.sku || '—')}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -494,38 +658,138 @@ export default function LabCounterPage() {
       )}
 
       {tab === 'results' && (
-        <div className="grid lg:grid-cols-3 gap-4">
-          <div className="card space-y-2 no-print">
-            <h3 className="font-semibold text-slate-800">Orders</h3>
-            <div className="max-h-96 overflow-auto space-y-2">
-              {orders.length === 0 && <div className="text-slate-500 text-sm py-4 text-center border rounded-lg">No lab orders yet</div>}
-              {orders.map((o) => (
-                <SelectableCard key={o.order_id} selected={selectedOrder?.order_id === o.order_id} onClick={() => selectOrder(o)}>
-                  <div className="font-semibold flex items-center gap-2">{o.patient_name} <StatusBadge value={o.status} /></div>
-                  <div className="text-xs text-slate-600">{o.uhid} · {o.tests}</div>
-                  <div className="text-xs text-slate-400">{formatDate(o.created_at || '')}</div>
-                </SelectableCard>
-              ))}
-            </div>
+        <div className="space-y-4">
+          <div className="card space-y-3 no-print">
+            {resultPatient ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="shrink-0 w-9 h-9 rounded-full bg-[var(--brand-50)] text-[var(--brand-700)] flex items-center justify-center font-semibold text-sm">
+                    {resultPatient.name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-800 truncate">
+                      {resultPatient.name} <span className="text-slate-500 font-normal">· {resultPatient.uhid}</span>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {patientOrders.length} lab order{patientOrders.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                </div>
+                <button type="button" className="btn btn-secondary btn-sm shrink-0" onClick={changeResultPatient}>Change patient</button>
+              </div>
+            ) : (
+              <>
+                <h3 className="font-semibold text-slate-800">Patient Select</h3>
+                <div className="flex gap-2">
+                  <input
+                    className="input"
+                    placeholder="Search name / ID / father / phone"
+                    value={resultQuery}
+                    onChange={(e) => setResultQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && searchResultPatient()}
+                  />
+                  <button type="button" disabled={busy} className="btn btn-secondary btn-sm shrink-0" onClick={searchResultPatient}>Go</button>
+                </div>
+                {resultSearchResults.length > 0 && (
+                  <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+                    {resultSearchResults.map((p) => (
+                      <button
+                        type="button"
+                        key={p.id}
+                        className="rounded-full border border-slate-300 px-3 py-1.5 text-sm hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)] cursor-pointer"
+                        onClick={() => pickResultPatient(p)}
+                      >
+                        {p.name} · {p.uhid}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  className="input"
+                  placeholder="Filter patients with lab orders..."
+                  value={resultListQuery}
+                  onChange={(e) => setResultListQuery(e.target.value)}
+                />
+                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                  {patientsWithOrders.length === 0 && (
+                    <div className="text-slate-500 text-sm py-2">No lab orders yet</div>
+                  )}
+                  {patientsWithOrders.length > 0 && filteredResultPatients.length === 0 && (
+                    <div className="text-slate-500 text-sm py-2">No match for &quot;{resultListQuery}&quot;</div>
+                  )}
+                  {filteredResultPatients.map((p) => (
+                    <button
+                      type="button"
+                      key={p.patient_id}
+                      onClick={() => pickResultPatient(p)}
+                      className="rounded-full border border-slate-300 px-3 py-1.5 text-sm cursor-pointer transition-colors hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)]"
+                    >
+                      {p.name} <span className="opacity-70">· {p.uhid}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
-          {!selectedOrder && (
-            <div className="lg:col-span-2 card no-print"><p className="text-slate-500">Order list ကနေ ရွေးပါ</p></div>
+          {resultPatient && (
+            <div className="card space-y-3 no-print">
+              <h3 className="font-semibold text-slate-800">Tests — {resultPatient.name}</h3>
+              {patientOrders.length === 0 ? (
+                <p className="text-sm text-slate-500">ဒီလူနာအတွက် lab order မရှိသေးပါ</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {patientOrders.map((o) => (
+                    <button
+                      type="button"
+                      key={o.order_id}
+                      onClick={() => selectOrder(o)}
+                      className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                        selectedOrder?.order_id === o.order_id
+                          ? 'border-[var(--brand-600)] bg-[var(--brand-50)]'
+                          : 'border-slate-300 hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)]'
+                      }`}
+                    >
+                      <div className="font-medium flex items-center gap-2">
+                        {o.tests}
+                        <StatusBadge value={o.status} />
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">{formatDate(o.created_at || '')}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!resultPatient && (
+            <div className="card no-print">
+              <p className="text-slate-500 text-sm">↑ လူနာကို ရွေးပြီးရင် test result ထည့်နိုင်ပါမယ်</p>
+            </div>
+          )}
+
+          {resultPatient && patientOrders.length > 0 && !selectedOrder && (
+            <div className="card no-print">
+              <p className="text-slate-500 text-sm">Test တစ်ခု ရွေးပါ</p>
+            </div>
           )}
 
           {selectedOrder && selectedTemplate && (
-            <div className="lg:col-span-2 space-y-3">
-              <div className="card flex items-center justify-between gap-3 no-print">
-                <h3 className="font-semibold">{selectedOrder.patient_name} — {selectedOrder.tests}</h3>
+            <div className="space-y-3">
+              <div className="card flex flex-wrap items-center justify-between gap-3 no-print">
+                <h3 className="font-semibold">{selectedOrder.tests}</h3>
                 <button type="button" disabled={busy} className="btn btn-primary btn-sm" onClick={submitResult}>Save Result</button>
               </div>
               <LabTemplateResult
+                key={selectedOrder.order_id}
                 template={selectedTemplate}
                 values={templateValues}
                 onChange={setTemplateValues}
                 patientName={selectedOrder.patient_name}
                 uhid={selectedOrder.uhid}
-                age={selectedPatientDetail?.age_years}
+                age={formatAge(selectedPatientDetail?.age_years, selectedPatientDetail?.age_months, selectedPatientDetail?.age_days)}
+                ageYears={selectedPatientDetail?.age_years}
+                ageMonths={selectedPatientDetail?.age_months}
                 gender={selectedPatientDetail?.gender}
                 date={selectedOrder.created_at}
                 sampleId={selectedOrder.sample_id}
@@ -535,8 +799,8 @@ export default function LabCounterPage() {
 
           {selectedOrder && !selectedTemplate && (
             <>
-              <div className="lg:col-span-2 card space-y-3 no-print">
-                <h3 className="font-semibold">{selectedOrder.patient_name} — {selectedOrder.tests}</h3>
+              <div className="card space-y-3 no-print">
+                <h3 className="font-semibold">{selectedOrder.tests}</h3>
                 <textarea
                   className="input min-h-32"
                   placeholder="Result / findings..."
@@ -545,19 +809,125 @@ export default function LabCounterPage() {
                 />
                 <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={submitResult}>Save Result</button>
               </div>
-              <div className="lg:col-span-3">
-                <ResultSlip
-                  title="Laboratory Report"
-                  patientName={selectedOrder.patient_name}
-                  uhid={selectedOrder.uhid}
-                  date={selectedOrder.created_at}
-                  bodyLabel={selectedOrder.tests}
-                  bodyText={resultText}
-                />
-              </div>
+              <ResultSlip
+                title="Laboratory Report"
+                patientName={selectedOrder.patient_name}
+                uhid={selectedOrder.uhid}
+                date={selectedOrder.created_at}
+                bodyLabel={selectedOrder.tests}
+                bodyText={resultText}
+              />
             </>
           )}
         </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="card space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="text-xs text-slate-500">
+              From
+              <input
+                className="input mt-1"
+                type="date"
+                value={historyFilters.date_from}
+                onChange={(e) => setHistoryFilters({ ...historyFilters, date_from: e.target.value })}
+              />
+            </label>
+            <label className="text-xs text-slate-500">
+              To
+              <input
+                className="input mt-1"
+                type="date"
+                value={historyFilters.date_to}
+                onChange={(e) => setHistoryFilters({ ...historyFilters, date_to: e.target.value })}
+              />
+            </label>
+            <label className="text-xs text-slate-500">
+              Status
+              <select
+                className="input mt-1"
+                value={historyFilters.status}
+                onChange={(e) => setHistoryFilters({ ...historyFilters, status: e.target.value })}
+              >
+                <option value="all">All</option>
+                <option value="ordered">Ordered</option>
+                <option value="completed">Completed</option>
+              </select>
+            </label>
+            <label className="text-xs text-slate-500">
+              Test
+              <select
+                className="input mt-1"
+                value={historyFilters.test}
+                onChange={(e) => setHistoryFilters({ ...historyFilters, test: e.target.value })}
+              >
+                <option value="">All tests</option>
+                {LAB_TEMPLATES.map((t) => (
+                  <option key={t.name} value={t.name}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-slate-500">
+              Search
+              <input
+                className="input mt-1"
+                placeholder="Name / ID / test"
+                value={historyFilters.q}
+                onChange={(e) => setHistoryFilters({ ...historyFilters, q: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && loadHistory()}
+              />
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => loadHistory()}>Search</button>
+          </div>
+          <DataTable
+            rows={history}
+            keyField="order_id"
+            onRowClick={(row) => setHistoryOrderId(row.order_id)}
+            columns={[
+              { key: 'date', label: 'Date', render: (r) => formatDate(r.created_at || '') },
+              { key: 'patient', label: 'Patient', render: (r) => r.patient_name },
+              { key: 'uhid', label: 'ID', render: (r) => r.uhid },
+              { key: 'tests', label: 'Test', render: (r) => r.tests },
+              { key: 'sample', label: 'Lab No', render: (r) => r.sample_id || '—' },
+              { key: 'status', label: 'Status', render: (r) => <StatusBadge value={r.status} /> },
+            ]}
+            emptyText="No lab orders match these filters"
+          />
+        </div>
+      )}
+
+      {historyOrderId != null && (
+        <Modal title="Lab report" onClose={() => setHistoryOrderId(null)} maxWidth="max-w-4xl">
+          <div className="max-h-[75vh] overflow-auto">
+            <LabReportView orderId={historyOrderId} />
+          </div>
+        </Modal>
+      )}
+
+      {walkInOpen && (
+        <Modal title="Walk-in Lab" onClose={() => setWalkInOpen(false)}>
+          <p className="text-xs text-slate-500">Reception မလိုပဲ Lab မှာ တိုက်ရိုက် စစ်မယ့် လူနာ — နာမည်နဲ့ အသက် ဖြည့်ပါ</p>
+          <input className="input" placeholder="Name *" value={walkInForm.name} onChange={(e) => setWalkInForm({ ...walkInForm, name: e.target.value })} />
+          <div className="grid grid-cols-3 gap-2">
+            <input className="input" type="number" min={0} placeholder="နှစ်" value={walkInForm.age_years} onChange={(e) => setWalkInForm({ ...walkInForm, age_years: e.target.value })} />
+            <input className="input" type="number" min={0} max={11} placeholder="လ" value={walkInForm.age_months} onChange={(e) => setWalkInForm({ ...walkInForm, age_months: e.target.value })} />
+            <input className="input" type="number" min={0} max={30} placeholder="ရက်" value={walkInForm.age_days} onChange={(e) => setWalkInForm({ ...walkInForm, age_days: e.target.value })} />
+          </div>
+          <p className="text-xs text-slate-500 -mt-1">အသက် — နှစ်၊ လ (၀–၁၁)၊ ရက် (၀–၃၀)</p>
+          <select className="input" value={walkInForm.gender} onChange={(e) => setWalkInForm({ ...walkInForm, gender: e.target.value })}>
+            <option value="F">Female</option>
+            <option value="M">Male</option>
+          </select>
+          <input className="input" placeholder="Phone (optional)" value={walkInForm.phone} onChange={(e) => setWalkInForm({ ...walkInForm, phone: e.target.value })} />
+          <input className="input" placeholder="Referring doctor (optional)" value={walkInForm.referring_doctor} onChange={(e) => setWalkInForm({ ...walkInForm, referring_doctor: e.target.value })} />
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={submitWalkIn}>Create & Select</button>
+            <button type="button" className="btn btn-secondary flex-1" onClick={() => setWalkInOpen(false)}>Cancel</button>
+          </div>
+        </Modal>
       )}
 
       {detailOpen && patient && (
@@ -565,7 +935,7 @@ export default function LabCounterPage() {
           {patientDetail && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm border-b border-slate-200 pb-3">
               <div><span className="text-slate-500">Father:</span> <strong>{patientDetail.father_name || '—'}</strong></div>
-              <div><span className="text-slate-500">Age:</span> <strong>{patientDetail.age_years ?? '—'}</strong></div>
+              <div><span className="text-slate-500">Age:</span> <strong>{formatAge(patientDetail.age_years, patientDetail.age_months, patientDetail.age_days)}</strong></div>
               <div><span className="text-slate-500">Gender:</span> <strong>{patientDetail.gender || '—'}</strong></div>
               <div><span className="text-slate-500">Phone:</span> <strong>{patientDetail.phone || '—'}</strong></div>
               {patientDetail.allergies && (

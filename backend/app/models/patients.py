@@ -29,6 +29,8 @@ class Patient(Base):
     father_name: Mapped[str] = mapped_column(String(160), default="")
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
     age_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    age_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    age_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gender: Mapped[str] = mapped_column(String(10), default="")
     phone: Mapped[str] = mapped_column(String(40), index=True, default="")
     nrc: Mapped[str] = mapped_column(String(40), default="")

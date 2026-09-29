@@ -52,6 +52,8 @@ class PatientIn(BaseModel):
     gender: str = ""
     dob: str | None = None
     age_years: int | None = None
+    age_months: int | None = None
+    age_days: int | None = None
     nrc: str = ""
     address: str = ""
     referring_doctor: str = ""
@@ -72,6 +74,8 @@ class PatientOut(BaseModel):
     gender: str = ""
     dob: date | None = None
     age_years: int | None = None
+    age_months: int | None = None
+    age_days: int | None = None
     nrc: str = ""
     address: str = ""
     referring_doctor: str = ""
@@ -158,6 +162,7 @@ class InvoiceOut(BaseModel):
     paid: float
     balance: float
     kind: str
+    admission_id: int | None = None
     created_at: datetime | None = None
     lines: list[InvoiceLineOut] = []
     payments: list[PaymentOut] = []

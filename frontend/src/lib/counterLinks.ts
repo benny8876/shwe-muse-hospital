@@ -30,9 +30,9 @@ export const COUNTER_LINKS: CounterLink[] = [
   { key: 'lab', to: '/counter/lab', label: 'counterLab', icon: IconLab, roles: ['lab_tech', 'super_admin', 'hospital_admin'], subtitle: 'Order test, enter result, print report' },
   { key: 'xray', to: '/counter/xray', label: 'counterXray', icon: IconXray, roles: ['radiology', 'super_admin', 'hospital_admin', 'ot_staff'], subtitle: 'Select patient, order X-ray, enter findings' },
   { key: 'usg', to: '/counter/usg', label: 'counterUsg', icon: IconUsg, roles: ['usg', 'super_admin', 'hospital_admin'], subtitle: 'Order scan, enter findings, print report' },
-  { key: 'nurse', to: '/counter/nurse', label: 'counterNurse', icon: IconNurse, roles: ['nurse', 'super_admin', 'hospital_admin'], subtitle: 'Admitted IPD patients — vitals & nursing notes' },
+  { key: 'nurse', to: '/counter/nurse', label: 'counterNurse', icon: IconNurse, roles: ['nurse', 'super_admin', 'hospital_admin'], subtitle: 'OPD/IPD medicine orders & IPD nursing notes' },
   { key: 'ipd', to: '/counter/ipd', label: 'counterIpd', icon: IconIpd, roles: ['nurse', 'super_admin', 'hospital_admin'], subtitle: 'Ward/bed grid — see who is in each bed and running bill' },
-  { key: 'store', to: '/counter/store', label: 'counterStore', icon: IconStore, roles: ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin'], subtitle: 'Stock in/out, warehouse, suppliers — shared across counters' },
+  { key: 'store', to: '/counter/store', label: 'counterStore', icon: IconStore, roles: ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin'], subtitle: 'Stock by department — Pharmacy, Lab, X-ray, USG' },
   { key: 'cashier', to: '/counter/cashier', label: 'counterCashier', icon: IconCashier, roles: ['cashier', 'super_admin', 'hospital_admin', 'executive', 'accountant', 'hr'], subtitle: 'Collect payment & expenses' },
 ]
 

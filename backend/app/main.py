@@ -6,6 +6,7 @@ from sqlalchemy import inspect, text
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.db.demo_seed import ensure_demo_seed
 from app.db.seed import ensure_extra_seed, seed
 from app.db.session import Base, SessionLocal, engine
 import app.models  # noqa: F401
@@ -23,6 +24,10 @@ def _ensure_schema() -> None:
         with engine.begin() as conn:
             if "age_years" not in cols:
                 conn.execute(text("ALTER TABLE patients ADD COLUMN age_years INTEGER"))
+            if "age_months" not in cols:
+                conn.execute(text("ALTER TABLE patients ADD COLUMN age_months INTEGER"))
+            if "age_days" not in cols:
+                conn.execute(text("ALTER TABLE patients ADD COLUMN age_days INTEGER"))
             if "referring_doctor" not in cols:
                 conn.execute(text("ALTER TABLE patients ADD COLUMN referring_doctor VARCHAR(160) DEFAULT ''"))
             if "father_name" not in cols:
@@ -36,6 +41,11 @@ def _ensure_schema() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN extra_permissions TEXT DEFAULT ''"))
             if "allowed_features" not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN allowed_features TEXT DEFAULT ''"))
+    if "ward_med_orders" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("ward_med_orders")}
+        if "invoice_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ward_med_orders ADD COLUMN invoice_id INTEGER"))
     if "expenses" in insp.get_table_names():
         cols = {c["name"] for c in insp.get_columns("expenses")}
         with engine.begin() as conn:
@@ -70,6 +80,7 @@ async def lifespan(_: FastAPI):
         try:
             seed(db)
             ensure_extra_seed(db)
+            ensure_demo_seed(db)
         finally:
             db.close()
     yield

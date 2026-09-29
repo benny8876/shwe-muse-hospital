@@ -11,8 +11,10 @@ from app.models.catalog import CatalogItem
 from app.models.ipd import Admission, Bed, NursingNote, VitalSign, Ward
 from app.models.patients import Patient
 from app.models.users import User
-from app.schemas.actions import AdmitIn, DischargeIn, NoteIn, TransferIn, VitalsIn
-from app.services.billing_service import add_line, create_invoice, recalc_invoice
+from app.schemas.actions import AdmitIn, DischargeIn, IpdDepositIn, NoteIn, TransferIn, VitalsIn
+from app.schemas.common import InvoiceOut
+from app.services.billing_service import add_line, collect_ipd_deposit, create_invoice, recalc_invoice
+from app.services.utils import audit
 
 router = APIRouter(prefix="/ipd", tags=["ipd"])
 
@@ -74,6 +76,7 @@ def ipd_dashboard(branch_id: int, db: Session = Depends(get_db), _: User = Depen
                         "billing_mode": adm.billing_mode,
                         "invoice_id": inv.id if inv else None,
                         "invoice_number": inv.number if inv else None,
+                        "invoice_status": inv.status if inv else None,
                         "total": inv.total if inv else 0,
                         "subtotal": inv.subtotal if inv else 0,
                         "balance": inv.balance if inv else 0,
@@ -164,30 +167,77 @@ def transfer(admission_id: int, data: TransferIn, db: Session = Depends(get_db),
     return adm
 
 
+@router.post("/admissions/{admission_id}/deposit", response_model=InvoiceOut)
+def add_deposit(
+    admission_id: int,
+    data: IpdDepositIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require("ipd", "front_desk", "pos", "billing")),
+):
+    from sqlalchemy.orm import joinedload
+
+    from app.models.billing import Invoice
+
+    try:
+        inv, _adm = collect_ipd_deposit(
+            db,
+            admission_id=admission_id,
+            amount=data.amount,
+            method=data.method,
+            user_id=user.id,
+        )
+        db.commit()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    inv = (
+        db.query(Invoice)
+        .options(joinedload(Invoice.lines), joinedload(Invoice.payments))
+        .filter(Invoice.id == inv.id)
+        .first()
+    )
+    return inv
+
+
 @router.post("/admissions/{admission_id}/daily-charge")
-def daily_charge(admission_id: int, db: Session = Depends(get_db), _: User = Depends(require("ipd", "billing.create"))):
+def daily_charge(
+    admission_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require("ipd", "billing.create", "nursing")),
+):
     adm = db.get(Admission, admission_id)
     if not adm or not adm.bed_id:
         raise HTTPException(404)
+    if adm.status not in ("admitted", "transferred"):
+        raise HTTPException(400, "Admission is not active")
     bed = db.get(Bed, adm.bed_id)
     inv = db.query(Invoice).filter(Invoice.admission_id == admission_id, Invoice.kind == "ipd").first()
     if not inv:
         inv = create_invoice(db, adm.branch_id, adm.patient_id, kind="ipd", doctor_id=adm.doctor_id)
         inv.admission_id = admission_id
     rate = bed.daily_rate if adm.billing_mode == "daily" else bed.hourly_rate if adm.billing_mode == "hourly" else bed.package_rate
-    add_line(db, inv, None, 1, rate, "ipd_room", f"Room charge {bed.code}")
+    label = f"Room charge {bed.code} ({adm.billing_mode})"
+    add_line(db, inv, None, 1, rate, "ipd_room", label)
+    audit(db, user.id, "ipd_daily_charge", "admission", str(admission_id), f"{label} rate={rate}")
     db.commit()
+    db.refresh(inv)
     return inv
 
 
 @router.post("/admissions/{admission_id}/discharge")
-def discharge(admission_id: int, data: DischargeIn, db: Session = Depends(get_db), _: User = Depends(require("ipd"))):
+def discharge(
+    admission_id: int,
+    data: DischargeIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require("ipd", "front_desk")),
+):
     adm = db.get(Admission, admission_id)
     if not adm:
         raise HTTPException(404)
+    if adm.status == "discharged":
+        raise HTTPException(400, "Already discharged")
     adm.status = "discharged"
     adm.discharged_at = datetime.utcnow()
-    adm.discharge_summary = data.summary
+    adm.discharge_summary = data.summary or ""
     if adm.bed_id:
         bed = db.get(Bed, adm.bed_id)
         if bed:
@@ -195,23 +245,44 @@ def discharge(admission_id: int, data: DischargeIn, db: Session = Depends(get_db
     inv = db.query(Invoice).filter(Invoice.admission_id == admission_id).first()
     if inv:
         recalc_invoice(inv, db)
+    audit(db, user.id, "ipd_discharge", "admission", str(admission_id), (data.summary or "")[:120])
     db.commit()
-    return adm
+    db.refresh(adm)
+    inv_payload = None
+    if inv:
+        inv_payload = {
+            "id": inv.id,
+            "number": inv.number,
+            "status": inv.status,
+            "total": inv.total,
+            "balance": inv.balance,
+            "paid": inv.paid,
+        }
+    return {"admission": adm, "invoice": inv_payload}
 
 
 @router.get("/admissions")
 def admissions(branch_id: int | None = None, status: str = "admitted", db: Session = Depends(get_db), _: User = Depends(require("ipd", "ipd.read", "nursing"))):
-    q = db.query(Admission).filter(Admission.status == status)
+    q = db.query(Admission)
+    if status == "admitted":
+        q = q.filter(Admission.status.in_(["admitted", "transferred"]))
+    else:
+        q = q.filter(Admission.status == status)
     if branch_id:
         q = q.filter(Admission.branch_id == branch_id)
     return q.all()
 
 
 @router.post("/admissions/{admission_id}/vitals")
-def add_vitals(admission_id: int, data: VitalsIn, db: Session = Depends(get_db), _: User = Depends(require("vitals", "nursing"))):
+def add_vitals(admission_id: int, data: VitalsIn, db: Session = Depends(get_db), user: User = Depends(require("vitals", "nursing"))):
+    adm = db.get(Admission, admission_id)
+    if not adm or adm.status not in ("admitted", "transferred"):
+        raise HTTPException(400, "Admission is not active")
     v = VitalSign(admission_id=admission_id, bp=data.bp, pulse=data.pulse, temp=data.temp, spo2=data.spo2, weight=data.weight)
     db.add(v)
+    audit(db, user.id, "vitals_record", "admission", str(admission_id), f"bp={data.bp} pulse={data.pulse}")
     db.commit()
+    db.refresh(v)
     return v
 
 

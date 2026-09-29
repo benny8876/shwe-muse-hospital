@@ -1,14 +1,15 @@
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.deps import get_current_user, require
 from app.db.session import get_db
 from app.models.billing import Invoice, InvoiceLine
-from app.models.catalog import CatalogItem
-from app.models.ipd import Bed, Ward
+from app.models.catalog import CatalogItem, LabTestReagent
+from app.models.ipd import Admission, Bed, Ward
 from app.models.org import AuditLog
 from app.models.patients import Patient
 from app.models.users import User
@@ -22,6 +23,7 @@ from app.schemas.counter import (
     DoctorUpdateIn,
     LabOrderCounterIn,
     LabResultIn,
+    LabWalkIn,
     PharmacyCounterIn,
     RadiologyResultIn,
     ReceptionRegisterIn,
@@ -41,10 +43,12 @@ from app.services.counter_service import (
     doctor_examine,
     get_open_invoice,
     lab_order,
+    lab_walk_in,
     lab_result,
     list_doctors,
     list_service_items,
     patient_medical_history,
+    search_patient_records,
     pending_prescriptions,
     pharmacy_charge,
     pharmacy_walk_in_sale,
@@ -76,6 +80,8 @@ def counter_reception(data: ReceptionRegisterIn, db: Session = Depends(get_db), 
             deposit=data.deposit,
             billing_mode=data.billing_mode,
             age_years=data.age_years,
+            age_months=data.age_months,
+            age_days=data.age_days,
             address=data.address,
             father_name=data.father_name,
             referring_doctor=data.referring_doctor,
@@ -92,6 +98,7 @@ def counter_reception(data: ReceptionRegisterIn, db: Session = Depends(get_db), 
             "invoice_number": result["invoice"].number,
             "token_number": result["token"].number if result["token"] else None,
             "doctor_name": result["doctor"].full_name,
+            "doctor_specialty": result["doctor"].specialty or "",
             "consultation_fee": result["doctor"].consultation_fee if result["patient_type"] == "opd" else 0,
             "total": result["invoice"].total,
             "balance": result["invoice"].balance,
@@ -126,6 +133,8 @@ def active_patients(branch_id: int, db: Session = Depends(get_db), _: User = Dep
             "invoice_id": inv.id,
             "invoice_number": inv.number,
             "invoice_kind": inv.kind,
+            "invoice_status": inv.status,
+            "admission_id": inv.admission_id,
             "total": inv.total,
             "balance": inv.balance,
         }
@@ -162,10 +171,23 @@ def patient_open_invoice(
     patient_id: int,
     branch_id: int,
     kind: str | None = None,
+    invoice_id: int | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    inv = get_open_invoice(db, patient_id, branch_id, kind)
+    if invoice_id:
+        inv = (
+            db.query(Invoice)
+            .filter(
+                Invoice.id == invoice_id,
+                Invoice.patient_id == patient_id,
+                Invoice.branch_id == branch_id,
+                Invoice.status.in_(["draft", "open", "partial"]),
+            )
+            .first()
+        )
+    else:
+        inv = get_open_invoice(db, patient_id, branch_id, kind)
     if not inv:
         return None
     inv = (
@@ -179,13 +201,19 @@ def patient_open_invoice(
 
 @router.get("/open-invoices")
 def open_invoices(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require("pos", "billing", "billing.read"))):
+    ongoing_ipd = and_(
+        Invoice.kind == "ipd",
+        Invoice.admission_id.isnot(None),
+        Admission.status.in_(["admitted", "transferred"]),
+    )
     rows = (
         db.query(Invoice)
         .options(joinedload(Invoice.lines))
+        .outerjoin(Admission, Invoice.admission_id == Admission.id)
         .filter(
             Invoice.branch_id == branch_id,
             Invoice.status.in_(["draft", "open", "partial"]),
-            Invoice.balance > 0.01,
+            or_(Invoice.balance > 0.01, ongoing_ipd),
         )
         .order_by(Invoice.id.desc())
         .limit(100)
@@ -258,6 +286,7 @@ def counter_pharmacy(data: PharmacyCounterIn, db: Session = Depends(get_db), use
             qty=data.qty,
             user_id=user.id,
             prescription_item_id=data.prescription_item_id,
+            invoice_id=data.invoice_id,
         )
         db.commit()
         return {
@@ -397,18 +426,52 @@ def counter_doctor_examine(
 
 @router.get("/lab-items")
 def counter_lab_items(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return (
+    items = (
         db.query(CatalogItem)
         .filter(CatalogItem.category == "lab", CatalogItem.is_active == True)  # noqa: E712
         .order_by(CatalogItem.price.asc())
         .all()
     )
+    links = (
+        db.query(LabTestReagent, CatalogItem)
+        .join(CatalogItem, LabTestReagent.reagent_item_id == CatalogItem.id)
+        .all()
+    )
+    reagents: dict[int, list] = {}
+    for link, reagent in links:
+        reagents.setdefault(link.test_item_id, []).append({
+            "item_id": reagent.id,
+            "sku": reagent.sku,
+            "name": reagent.name,
+            "qty": link.qty,
+            "unit": reagent.unit or "ea",
+        })
+    return [
+        {
+            "id": item.id,
+            "sku": item.sku,
+            "name": item.name,
+            "name_mm": item.name_mm,
+            "price": item.price,
+            "category": item.category,
+            "department": item.department,
+            "reagents": reagents.get(item.id, []),
+        }
+        for item in items
+    ]
 
 
 @router.post("/lab")
 def counter_lab(data: LabOrderCounterIn, db: Session = Depends(get_db), user: User = Depends(require("lab"))):
     try:
-        result = lab_order(db, branch_id=data.branch_id, patient_id=data.patient_id, item_id=data.item_id, user_id=user.id)
+        result = lab_order(
+            db,
+            branch_id=data.branch_id,
+            patient_id=data.patient_id,
+            item_id=data.item_id,
+            user_id=user.id,
+            invoice_id=data.invoice_id,
+        )
         db.commit()
         return {
             "ok": True,
@@ -421,6 +484,42 @@ def counter_lab(data: LabOrderCounterIn, db: Session = Depends(get_db), user: Us
         }
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+
+@router.post("/lab/walk-in")
+def counter_lab_walk_in(data: LabWalkIn, db: Session = Depends(get_db), user: User = Depends(require("lab"))):
+    try:
+        result = lab_walk_in(
+            db,
+            branch_id=data.branch_id,
+            name=data.name,
+            phone=data.phone,
+            gender=data.gender,
+            age_years=data.age_years,
+            age_months=data.age_months,
+            age_days=data.age_days,
+            referring_doctor=data.referring_doctor,
+            user_id=user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    inv = result["invoice"]
+    patient = result["patient"]
+    return {
+        "patient_id": patient.id,
+        "name": patient.name,
+        "uhid": patient.uhid,
+        "age_years": patient.age_years,
+        "age_months": patient.age_months,
+        "age_days": patient.age_days,
+        "gender": patient.gender,
+        "invoice_id": inv.id,
+        "invoice_number": inv.number,
+        "invoice_kind": inv.kind,
+        "total": inv.total,
+        "balance": inv.balance,
+    }
 
 
 @router.get("/lab-order/{order_id}")
@@ -436,6 +535,8 @@ def counter_lab_order_detail(order_id: int, db: Session = Depends(get_db), _: Us
         "patient_name": patient.name if patient else "",
         "uhid": patient.uhid if patient else "",
         "age_years": patient.age_years if patient else None,
+        "age_months": patient.age_months if patient else None,
+        "age_days": patient.age_days if patient else None,
         "gender": patient.gender if patient else "",
         "tests": order.tests,
         "result": order.result,
@@ -443,6 +544,67 @@ def counter_lab_order_detail(order_id: int, db: Session = Depends(get_db), _: Us
         "sample_id": order.sample_id,
         "created_at": order.created_at.isoformat() if order.created_at else None,
     }
+
+
+@router.get("/lab/history")
+def lab_history(
+    branch_id: int,
+    q: str = "",
+    test: str = "",
+    status: str = "all",
+    date_from: str = "",
+    date_to: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(require("lab")),
+):
+    """Past lab orders for the lab counter's History tab. Filters combine:
+    date range, status, test name, and a free-text match on patient name, ID,
+    sample id, or test name."""
+    from app.models.ancillary import LabOrder
+
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        raise HTTPException(400, "date_from / date_to must be YYYY-MM-DD") from e
+
+    query = (
+        db.query(LabOrder, Patient)
+        .join(Patient, LabOrder.patient_id == Patient.id)
+        .filter(LabOrder.branch_id == branch_id)
+    )
+    if start:
+        query = query.filter(LabOrder.created_at >= datetime.combine(start, time.min))
+    if end:
+        query = query.filter(LabOrder.created_at < datetime.combine(end + timedelta(days=1), time.min))
+    if status and status != "all":
+        query = query.filter(LabOrder.status == status)
+    if test.strip():
+        query = query.filter(LabOrder.tests.ilike(f"%{test.strip()}%"))
+    ql = q.strip()
+    if ql:
+        like = f"%{ql}%"
+        query = query.filter(or_(
+            Patient.name.ilike(like),
+            Patient.uhid.ilike(like),
+            LabOrder.tests.ilike(like),
+            LabOrder.sample_id.ilike(like),
+        ))
+    rows = query.order_by(LabOrder.id.desc()).limit(200).all()
+    return [
+        {
+            "order_id": o.id,
+            "patient_id": p.id,
+            "patient_name": p.name,
+            "uhid": p.uhid,
+            "tests": o.tests,
+            "result": o.result,
+            "status": o.status,
+            "sample_id": o.sample_id,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o, p in rows
+    ]
 
 
 @router.get("/lab-orders")
@@ -507,6 +669,168 @@ def counter_usg(data: UsgOrderIn, db: Session = Depends(get_db), user: User = De
         raise HTTPException(400, str(e)) from e
 
 
+@router.get("/usg/history")
+def usg_history(
+    branch_id: int,
+    q: str = "",
+    exam: str = "",
+    status: str = "all",
+    date_from: str = "",
+    date_to: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(require("radiology")),
+):
+    """Past USG orders. The order row only stores modality='usg'; the scan name
+    is the radiology invoice line created with that order, matched in order on
+    the same invoice. Filters match the X-ray history tab."""
+    import json
+    from collections import defaultdict
+
+    from app.models.ancillary import RadiologyOrder
+
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        raise HTTPException(400, "date_from / date_to must be YYYY-MM-DD") from e
+
+    query = (
+        db.query(RadiologyOrder, Patient)
+        .join(Patient, RadiologyOrder.patient_id == Patient.id)
+        .filter(RadiologyOrder.branch_id == branch_id, RadiologyOrder.modality == "usg")
+    )
+    if start:
+        query = query.filter(RadiologyOrder.created_at >= datetime.combine(start, time.min))
+    if end:
+        query = query.filter(RadiologyOrder.created_at < datetime.combine(end + timedelta(days=1), time.min))
+    if status and status != "all":
+        query = query.filter(RadiologyOrder.status == status)
+    rows = query.order_by(RadiologyOrder.id.desc()).limit(500).all()
+
+    invoice_ids = {o.invoice_id for o, _p in rows if o.invoice_id}
+    lines_by_invoice: dict[int, list[str]] = defaultdict(list)
+    if invoice_ids:
+        line_rows = (
+            db.query(InvoiceLine, CatalogItem)
+            .outerjoin(CatalogItem, InvoiceLine.item_id == CatalogItem.id)
+            .filter(InvoiceLine.invoice_id.in_(invoice_ids), InvoiceLine.source == "radiology")
+            .order_by(InvoiceLine.id.asc())
+            .all()
+        )
+        for line, item in line_rows:
+            if item is None or item.department != "usg":
+                continue
+            lines_by_invoice[line.invoice_id].append(line.description or item.name)
+
+    orders_by_invoice: dict[int | None, list] = defaultdict(list)
+    for pair in rows:
+        orders_by_invoice[pair[0].invoice_id].append(pair)
+    exam_by_order: dict[int, str] = {}
+    for inv_id, pairs in orders_by_invoice.items():
+        names = lines_by_invoice.get(inv_id or 0, [])
+        for index, (order, _patient) in enumerate(sorted(pairs, key=lambda pair: pair[0].id)):
+            exam_by_order[order.id] = names[index] if index < len(names) else ""
+
+    def exam_label(order: RadiologyOrder) -> str:
+        named = exam_by_order.get(order.id) or ""
+        if named:
+            return named
+        try:
+            parsed = json.loads(order.findings or "")
+            if isinstance(parsed, dict) and parsed.get("examType"):
+                return str(parsed["examType"])
+        except json.JSONDecodeError:
+            pass
+        return "USG"
+
+    exam_q = exam.strip().lower()
+    text_q = q.strip().lower()
+    out = []
+    for order, patient in rows:
+        label = exam_label(order)
+        if exam_q and exam_q not in label.lower():
+            continue
+        if text_q and text_q not in patient.name.lower() and text_q not in (patient.uhid or "").lower() and text_q not in label.lower():
+            continue
+        out.append({
+            "order_id": order.id,
+            "patient_id": patient.id,
+            "patient_name": patient.name,
+            "uhid": patient.uhid,
+            "modality": order.modality,
+            "exam_name": label,
+            "findings": order.findings,
+            "status": order.status,
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+        })
+        if len(out) >= 200:
+            break
+    return out
+
+
+@router.get("/xray/history")
+def xray_history(
+    branch_id: int,
+    q: str = "",
+    exam: str = "",
+    status: str = "all",
+    date_from: str = "",
+    date_to: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(require("radiology")),
+):
+    """Past X-ray orders for the X-ray counter's History tab. USG orders stay
+    out (they use modality='usg'). Filters combine date, status, exam name,
+    and a free-text match on patient name, ID, or exam."""
+    from app.models.ancillary import RadiologyOrder
+
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        raise HTTPException(400, "date_from / date_to must be YYYY-MM-DD") from e
+
+    query = (
+        db.query(RadiologyOrder, Patient, CatalogItem)
+        .join(Patient, RadiologyOrder.patient_id == Patient.id)
+        .outerjoin(CatalogItem, func.lower(CatalogItem.sku) == func.lower(RadiologyOrder.modality))
+        .filter(RadiologyOrder.branch_id == branch_id, RadiologyOrder.modality != "usg")
+    )
+    if start:
+        query = query.filter(RadiologyOrder.created_at >= datetime.combine(start, time.min))
+    if end:
+        query = query.filter(RadiologyOrder.created_at < datetime.combine(end + timedelta(days=1), time.min))
+    if status and status != "all":
+        query = query.filter(RadiologyOrder.status == status)
+    if exam.strip():
+        like = f"%{exam.strip()}%"
+        query = query.filter(or_(CatalogItem.name.ilike(like), RadiologyOrder.modality.ilike(like)))
+    ql = q.strip()
+    if ql:
+        like = f"%{ql}%"
+        query = query.filter(or_(
+            Patient.name.ilike(like),
+            Patient.uhid.ilike(like),
+            RadiologyOrder.modality.ilike(like),
+            CatalogItem.name.ilike(like),
+        ))
+    rows = query.order_by(RadiologyOrder.id.desc()).limit(200).all()
+    return [
+        {
+            "order_id": o.id,
+            "patient_id": p.id,
+            "patient_name": p.name,
+            "uhid": p.uhid,
+            "modality": o.modality,
+            "exam_name": item.name if item else o.modality,
+            "findings": o.findings,
+            "status": o.status,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o, p, item in rows
+    ]
+
+
 @router.get("/radiology-orders")
 def counter_radiology_orders(
     branch_id: int,
@@ -557,6 +881,8 @@ def counter_radiology_order_detail(order_id: int, db: Session = Depends(get_db),
         "patient_name": patient.name if patient else "",
         "uhid": patient.uhid if patient else "",
         "age_years": patient.age_years if patient else None,
+        "age_months": patient.age_months if patient else None,
+        "age_days": patient.age_days if patient else None,
         "gender": patient.gender if patient else "",
         "modality": order.modality,
         "findings": order.findings,
@@ -679,6 +1005,38 @@ def _bill_history_rows(db: Session, branch_id: int, q: str, status: str, days: i
     return out
 
 
+@router.get("/patient-records/search")
+def counter_patient_records_search(
+    branch_id: int,
+    date_from: str = "",
+    date_to: str = "",
+    kind: str = "",
+    source: str = "",
+    q: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(require("front_desk", "patients.read", "patients")),
+):
+    from datetime import date
+
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        raise HTTPException(400, "date_from / date_to must be YYYY-MM-DD") from e
+    try:
+        return search_patient_records(
+            db,
+            branch_id=branch_id,
+            date_from=start,
+            date_to=end,
+            kind=kind,
+            source=source,
+            q=q,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @router.get("/patient-medical-history")
 def counter_patient_medical_history(
     patient_id: int,
@@ -746,8 +1104,12 @@ def bill_history_export(
 
 
 @router.get("/doctors", response_model=list[UserOut])
-def counter_doctors(db: Session = Depends(get_db), _: User = Depends(require("pos", "billing", "front_desk", "patients.read"))):
-    return list_doctors(db)
+def counter_doctors(
+    specialty: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("pos", "billing", "front_desk", "patients.read")),
+):
+    return list_doctors(db, specialty=specialty)
 
 
 @router.post("/doctors", response_model=UserOut)

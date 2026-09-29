@@ -7,8 +7,9 @@ from app.models.billing import CashierShift, Invoice
 from app.models.catalog import CatalogItem, Promotion
 from app.models.users import User
 from app.models.billing import InvoiceLine
+from app.schemas.actions import IpdDepositIn
 from app.schemas.common import InvoiceCreateIn, InvoiceLineIn, InvoiceLineOut, InvoiceLineUpdateIn, InvoiceOut, MultiPaymentIn, PaymentIn
-from app.services.billing_service import add_line, create_invoice, pay_invoice, pay_invoice_multi, recalc_invoice, update_line
+from app.services.billing_service import add_line, collect_ipd_deposit, create_invoice, pay_invoice, pay_invoice_multi, recalc_invoice, update_line
 from app.services.utils import audit
 
 router = APIRouter(tags=["billing"])
@@ -155,6 +156,38 @@ def pay(invoice_id: int, data: PaymentIn, db: Session = Depends(get_db), user: U
         .first()
     )
     return {"payment_id": p.id, "invoice": inv}
+
+
+@router.post("/invoices/{invoice_id}/ipd-deposit", response_model=InvoiceOut)
+def ipd_deposit_on_invoice(
+    invoice_id: int,
+    data: IpdDepositIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require("billing", "pos")),
+):
+    inv = db.get(Invoice, invoice_id)
+    if not inv or inv.kind != "ipd" or not inv.admission_id:
+        raise HTTPException(400, "Not an active IPD bill")
+    shift = db.query(CashierShift).filter(CashierShift.user_id == user.id, CashierShift.status == "open").first()
+    try:
+        inv, _adm = collect_ipd_deposit(
+            db,
+            admission_id=inv.admission_id,
+            amount=data.amount,
+            method=data.method,
+            user_id=user.id,
+            shift_id=shift.id if shift else None,
+        )
+        db.commit()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    inv = (
+        db.query(Invoice)
+        .options(joinedload(Invoice.lines), joinedload(Invoice.payments))
+        .filter(Invoice.id == invoice_id)
+        .first()
+    )
+    return inv
 
 
 @router.post("/invoices/{invoice_id}/pay-multi", response_model=InvoiceOut)

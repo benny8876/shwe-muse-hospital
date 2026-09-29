@@ -5,6 +5,8 @@ import { useBranchId } from '../../hooks/useBranchId'
 import Modal from '../../components/Modal'
 import LabReportView from '../../components/LabReportView'
 import RadiologyReportView from '../../components/RadiologyReportView'
+import StatusBadge from '../../components/StatusBadge'
+import Alert from '../../components/Alert'
 import { formatDate, formatMoney } from '../../lib/format'
 
 type BedLine = { id: number; description: string; source: string; category: string | null; qty: number; unit_price: number; amount: number }
@@ -21,6 +23,7 @@ type BedAdmission = {
   billing_mode: string
   invoice_id: number | null
   invoice_number: string | null
+  invoice_status: string | null
   total: number
   subtotal: number
   balance: number
@@ -59,6 +62,8 @@ export default function IpdBedsCounterPage() {
   const [detailBed, setDetailBed] = useState<DashBed | null>(null)
   const [viewingLabOrderId, setViewingLabOrderId] = useState<number | null>(null)
   const [viewingRadiologyOrderId, setViewingRadiologyOrderId] = useState<number | null>(null)
+  const [dischargeSummary, setDischargeSummary] = useState('')
+  const [ipdActionBusy, setIpdActionBusy] = useState(false)
 
   const loadDashboard = useCallback(async () => {
     setWardsLoading(true)
@@ -77,6 +82,54 @@ export default function IpdBedsCounterPage() {
     const id = setInterval(() => void loadDashboard(), 15000)
     return () => clearInterval(id)
   }, [loadDashboard])
+
+  useEffect(() => {
+    setDischargeSummary('')
+  }, [detailBed?.id])
+
+  async function postRoomCharge(admissionId: number) {
+    setIpdActionBusy(true)
+    try {
+      const { data } = await api.post(`/ipd/admissions/${admissionId}/daily-charge`)
+      toast.success(`Room charge posted — balance ${formatMoney(data.balance)}`)
+      void loadDashboard()
+      if (detailBed?.admission) {
+        setDetailBed({
+          ...detailBed,
+          admission: {
+            ...detailBed.admission,
+            total: data.total,
+            balance: data.balance,
+            invoice_status: data.status,
+          },
+        })
+      }
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setIpdActionBusy(false)
+    }
+  }
+
+  async function dischargePatient(admissionId: number) {
+    setIpdActionBusy(true)
+    try {
+      const { data } = await api.post(`/ipd/admissions/${admissionId}/discharge`, { summary: dischargeSummary })
+      const inv = data.invoice
+      toast.success(
+        inv
+          ? `Discharged — bill ${inv.number} (${String(inv.status).toUpperCase()}), balance ${formatMoney(inv.balance)}`
+          : 'Patient discharged',
+      )
+      setDetailBed(null)
+      setDischargeSummary('')
+      void loadDashboard()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setIpdActionBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -134,6 +187,15 @@ export default function IpdBedsCounterPage() {
         <Modal title={`Bed ${detailBed.code} — ${detailBed.admission.patient_name}`} onClose={() => setDetailBed(null)} maxWidth="max-w-lg">
           <div className="space-y-3 text-sm">
             <div className="text-xs text-slate-500 -mt-1">{detailBed.admission.uhid} · Admitted {formatDate(detailBed.admission.admitted_at)}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {detailBed.admission.invoice_number && (
+                <span className="text-xs text-slate-600">Bill <strong>{detailBed.admission.invoice_number}</strong></span>
+              )}
+              {detailBed.admission.invoice_status && (
+                <StatusBadge value={String(detailBed.admission.invoice_status).toUpperCase()} />
+              )}
+              <span className="text-xs text-slate-500">Billing: {detailBed.admission.billing_mode}</span>
+            </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded bg-slate-50 p-2">
                 <div className="text-slate-500 text-xs">Total Cost</div>
@@ -193,6 +255,36 @@ export default function IpdBedsCounterPage() {
               })
             })()}
             {detailBed.admission.lines.length === 0 && <div className="text-slate-400">No charges yet</div>}
+
+            <Alert tone="info">
+              <strong>Orders:</strong> ဆေး → <strong>Nurse</strong> counter · Lab / X-ray / USG → သက်ဆိုင်ရာ counter (open IPD bill)။
+              <br />
+              <strong>Discharge:</strong> ဆေးရုံဆင်းပြီး bed လွှတ်မယ် — ကျန်ငွေ <strong>Cashier</strong>။ OPD follow-up → Reception <strong>Convert</strong> (discharge မဟုတ်)။
+            </Alert>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={ipdActionBusy}
+                className="btn btn-secondary btn-sm"
+                onClick={() => postRoomCharge(detailBed.admission!.admission_id)}
+              >
+                Post room charge ({detailBed.admission.billing_mode})
+              </button>
+            </div>
+            <textarea
+              className="input min-h-20"
+              placeholder="Discharge summary (optional)"
+              value={dischargeSummary}
+              onChange={(e) => setDischargeSummary(e.target.value)}
+            />
+            <button
+              type="button"
+              disabled={ipdActionBusy}
+              className="btn btn-primary w-full"
+              onClick={() => dischargePatient(detailBed.admission!.admission_id)}
+            >
+              Discharge patient & release bed
+            </button>
           </div>
         </Modal>
       )}
