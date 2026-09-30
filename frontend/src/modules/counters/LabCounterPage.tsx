@@ -11,7 +11,7 @@ import LabReportView from '../../components/LabReportView'
 import Alert from '../../components/Alert'
 import Modal from '../../components/Modal'
 import { formatAge, formatDate } from '../../lib/format'
-import { findLabTemplate, LAB_TEMPLATES } from '../../lib/labTemplates'
+import { findAnyLabTemplate, findLabTemplate, LAB_TEMPLATES, type CustomLabTemplate } from '../../lib/labTemplates'
 import { announceCall } from '../../lib/voiceAnnounce'
 
 type ActivePatient = {
@@ -55,7 +55,7 @@ function daysAgoISO(days: number) {
 export default function LabCounterPage() {
   const branchId = useBranchId()
   const toast = useToast()
-  const [tab, setTab] = useState<'order' | 'results' | 'history'>('order')
+  const [tab, setTab] = useState<'order' | 'results' | 'history' | 'templates'>('order')
   const [listQuery, setListQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [doctorFilter, setDoctorFilter] = useState('')
@@ -113,7 +113,106 @@ export default function LabCounterPage() {
   })
   const [history, setHistory] = useState<LabOrderRow[]>([])
   const [historyOrderId, setHistoryOrderId] = useState<number | null>(null)
-  const selectedTemplate = selectedOrder ? findLabTemplate(selectedOrder.tests) : undefined
+  const [customTemplates, setCustomTemplates] = useState<CustomLabTemplate[]>([])
+  const selectedTemplate = selectedOrder ? findAnyLabTemplate(selectedOrder.tests, customTemplates) : undefined
+
+  const loadCustomTemplates = useCallback(async () => {
+    try {
+      const { data } = await api.get('/lab-templates', { params: { full: true } })
+      setCustomTemplates(data)
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }, [toast])
+
+  const emptyTemplateRow = () => ({ kind: 'row' as const, label: '', unit: '', reference_range: '', remark: '' })
+  const [templateBuilderOpen, setTemplateBuilderOpen] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null)
+  const [templateBusy, setTemplateBusy] = useState(false)
+  const [templateForm, setTemplateForm] = useState<{
+    name: string
+    has_unit: boolean
+    has_range: boolean
+    has_remark: boolean
+    rows: { kind: 'section' | 'row'; label: string; unit: string; reference_range: string; remark: string }[]
+  }>({ name: '', has_unit: true, has_range: true, has_remark: true, rows: [emptyTemplateRow()] })
+
+  function startNewTemplate() {
+    setEditingTemplateId(null)
+    setTemplateForm({ name: '', has_unit: true, has_range: true, has_remark: true, rows: [emptyTemplateRow()] })
+    setTemplateBuilderOpen(true)
+  }
+
+  function startEditTemplate(t: CustomLabTemplate) {
+    setEditingTemplateId(t.id)
+    setTemplateForm({
+      name: t.name,
+      has_unit: t.has_unit,
+      has_range: t.has_range,
+      has_remark: t.has_remark,
+      rows: t.rows.map((r) => ({ kind: r.kind as 'section' | 'row', label: r.label, unit: r.unit, reference_range: r.reference_range, remark: r.remark })),
+    })
+    setTemplateBuilderOpen(true)
+  }
+
+  function updateTemplateRow(i: number, patch: Partial<{ kind: 'section' | 'row'; label: string; unit: string; reference_range: string; remark: string }>) {
+    setTemplateForm((f) => ({ ...f, rows: f.rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) }))
+  }
+
+  function moveTemplateRow(i: number, dir: -1 | 1) {
+    setTemplateForm((f) => {
+      const j = i + dir
+      if (j < 0 || j >= f.rows.length) return f
+      const rows = [...f.rows]
+      ;[rows[i], rows[j]] = [rows[j], rows[i]]
+      return { ...f, rows }
+    })
+  }
+
+  function removeTemplateRow(i: number) {
+    setTemplateForm((f) => ({ ...f, rows: f.rows.filter((_, idx) => idx !== i) }))
+  }
+
+  async function saveTemplate() {
+    if (!templateForm.name.trim()) return toast.error('Test name ရွေးပါ')
+    const rows = templateForm.rows.filter((r) => r.label.trim())
+    if (rows.length === 0) return toast.error('Row အနည်းဆုံး တစ်ကြောင်း ထည့်ပါ')
+    setTemplateBusy(true)
+    try {
+      const payload = { ...templateForm, name: templateForm.name.trim(), rows }
+      if (editingTemplateId) {
+        await api.put(`/lab-templates/${editingTemplateId}`, payload)
+        toast.success('Template updated')
+      } else {
+        await api.post('/lab-templates', payload)
+        toast.success('Template created')
+      }
+      setTemplateBuilderOpen(false)
+      await loadCustomTemplates()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setTemplateBusy(false)
+    }
+  }
+
+  async function deleteTemplate(t: CustomLabTemplate) {
+    if (!window.confirm(`"${t.name}" template ကို ဖျက်မလား?`)) return
+    setTemplateBusy(true)
+    try {
+      await api.delete(`/lab-templates/${t.id}`)
+      toast.success('Template deleted')
+      await loadCustomTemplates()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setTemplateBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadCustomTemplates()
+  }, [loadCustomTemplates])
 
   const loadActive = useCallback(async () => {
     try {
@@ -389,7 +488,7 @@ export default function LabCounterPage() {
     // reliably populated than Patient.referring_doctor, a rarely-filled
     // registration field.
     api.get(`/counter/lab-order/${o.order_id}`).then((r) => setSelectedPatientDetail(r.data)).catch(() => setSelectedPatientDetail(null))
-    const template = findLabTemplate(o.tests)
+    const template = findAnyLabTemplate(o.tests, customTemplates)
     if (template) {
       try {
         setTemplateValues(o.result ? JSON.parse(o.result) : {})
@@ -439,7 +538,8 @@ export default function LabCounterPage() {
         { id: 'order', label: 'Order Test' },
         { id: 'results', label: `Results (${pendingOrders.length} pending)` },
         { id: 'history', label: 'History' },
-      ]} active={tab} onChange={(t) => setTab(t as 'order' | 'results' | 'history')} />
+        { id: 'templates', label: 'Manage Templates' },
+      ]} active={tab} onChange={(t) => setTab(t as 'order' | 'results' | 'history' | 'templates')} />
 
       {tab === 'order' && (
         <div className="space-y-4">
@@ -848,6 +948,9 @@ export default function LabCounterPage() {
                 {LAB_TEMPLATES.map((t) => (
                   <option key={t.name} value={t.name}>{t.name}</option>
                 ))}
+                {customTemplates.map((t) => (
+                  <option key={`custom_${t.id}`} value={t.name}>{t.name}</option>
+                ))}
               </select>
             </label>
             <label className="text-xs text-slate-500">
@@ -878,6 +981,116 @@ export default function LabCounterPage() {
             ]}
             emptyText="No lab orders match these filters"
           />
+        </div>
+      )}
+
+      {tab === 'templates' && (
+        <div className="space-y-4">
+          <Alert tone="info">
+            ဒီမှာ ဖန်တီးထားတဲ့ format က Result ဖြည့်ချိန်မှာ Test name အတိအကျ ကိုက်ညီမှသာ auto ပေါ်ပါမယ် — footnote/လက်မှတ်ထိုးရန် box လို အထူး print layout မပါပါ (ဒါမျိုးက panel ၁၆ ခုအတွက်ပဲ ရှိပါတယ်)။
+          </Alert>
+
+          {!templateBuilderOpen && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold">Custom Templates</h3>
+                <button type="button" className="btn btn-primary btn-sm" onClick={startNewTemplate}>+ New Template</button>
+              </div>
+              <DataTable
+                rows={customTemplates}
+                keyField="id"
+                columns={[
+                  { key: 'name', label: 'Test Name', render: (r: any) => r.name },
+                  { key: 'rows', label: 'Rows', render: (r: any) => String(r.rows.length) },
+                  { key: 'act', label: '', render: (r: any) => (
+                    <div className="flex gap-1">
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => startEditTemplate(r)}>Edit</button>
+                      <button type="button" disabled={templateBusy} className="btn btn-secondary btn-sm text-red-600" onClick={() => deleteTemplate(r)}>Delete</button>
+                    </div>
+                  ) },
+                ]}
+                emptyText="Custom template မရှိသေးပါ"
+              />
+            </div>
+          )}
+
+          {templateBuilderOpen && (
+            <div className="card space-y-3">
+              <h3 className="font-semibold">{editingTemplateId ? 'Edit Template' : 'New Template'}</h3>
+              <div>
+                <label className="text-xs text-slate-500">Test Name (Test/Service Catalog ထဲက Lab Test name အတိအကျ ရွေးပါ)</label>
+                <select
+                  className="input mt-1"
+                  value={templateForm.name}
+                  onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                  disabled={!!editingTemplateId}
+                >
+                  <option value="">Test ရွေးပါ...</option>
+                  {labItems
+                    .filter((item: any) => !findLabTemplate(item.name) && !customTemplates.some((t) => t.name === item.name && t.id !== editingTemplateId))
+                    .map((item: any) => (
+                      <option key={item.id} value={item.name}>{item.name}</option>
+                    ))}
+                  {editingTemplateId && !labItems.some((item: any) => item.name === templateForm.name) && (
+                    <option value={templateForm.name}>{templateForm.name}</option>
+                  )}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={templateForm.has_unit} onChange={(e) => setTemplateForm({ ...templateForm, has_unit: e.target.checked })} />
+                  Unit column
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={templateForm.has_range} onChange={(e) => setTemplateForm({ ...templateForm, has_range: e.target.checked })} />
+                  Reference range column
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={templateForm.has_remark} onChange={(e) => setTemplateForm({ ...templateForm, has_remark: e.target.checked })} />
+                  Remark column
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-slate-700">Rows</h4>
+                {templateForm.rows.map((row, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 border border-slate-200 rounded-md p-2">
+                    <select className="input w-28 shrink-0" value={row.kind} onChange={(e) => updateTemplateRow(i, { kind: e.target.value as 'section' | 'row' })}>
+                      <option value="row">Field</option>
+                      <option value="section">Section</option>
+                    </select>
+                    <input
+                      className="input flex-1 min-w-[10rem]"
+                      placeholder={row.kind === 'section' ? 'Section heading' : 'Field label'}
+                      value={row.label}
+                      onChange={(e) => updateTemplateRow(i, { label: e.target.value })}
+                    />
+                    {row.kind === 'row' && (
+                      <>
+                        <input className="input w-24 shrink-0" placeholder="Unit" value={row.unit} onChange={(e) => updateTemplateRow(i, { unit: e.target.value })} />
+                        <input className="input w-32 shrink-0" placeholder="Range" value={row.reference_range} onChange={(e) => updateTemplateRow(i, { reference_range: e.target.value })} />
+                        <input className="input w-28 shrink-0" placeholder="Remark" value={row.remark} onChange={(e) => updateTemplateRow(i, { remark: e.target.value })} />
+                      </>
+                    )}
+                    <div className="flex gap-1 shrink-0">
+                      <button type="button" className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === 0} onClick={() => moveTemplateRow(i, -1)}>↑</button>
+                      <button type="button" className="text-slate-400 hover:text-slate-700 disabled:opacity-30" disabled={i === templateForm.rows.length - 1} onClick={() => moveTemplateRow(i, 1)}>↓</button>
+                      <button type="button" className="text-red-600 hover:text-red-700" onClick={() => removeTemplateRow(i)}>✕</button>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTemplateForm((f) => ({ ...f, rows: [...f.rows, emptyTemplateRow()] }))}>
+                  + Add Row
+                </button>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button type="button" disabled={templateBusy} className="btn btn-primary" onClick={saveTemplate}>Save Template</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setTemplateBuilderOpen(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

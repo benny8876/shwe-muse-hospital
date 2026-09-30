@@ -143,3 +143,19 @@ class StockReceiveIn(BaseModel):
     expiry_date: date | None = None
     selling_price: float | None = None
     min_stock: float | None = None
+
+
+class LabTemplateRowIn(BaseModel):
+    kind: str = "row"  # section | row
+    label: str
+    unit: str = ""
+    reference_range: str = ""
+    remark: str = ""
+
+
+class LabTemplateIn(BaseModel):
+    name: str
+    has_unit: bool = True
+    has_range: bool = True
+    has_remark: bool = True
+    rows: list[LabTemplateRowIn] = []

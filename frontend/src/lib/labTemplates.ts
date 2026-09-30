@@ -546,3 +546,42 @@ export function physicianReferenceRange(
 export function findLabTemplate(testName: string): LabTemplate | undefined {
   return LAB_TEMPLATES.find((t) => t.name === testName)
 }
+
+// Shape of a lab-staff-authored template as returned by GET /lab-templates
+// (?full=true) / POST/PUT /lab-templates — see backend/app/models/ancillary.py
+// LabTemplate/LabTemplateRow. Deliberately simpler than LabTemplate above: just
+// rows with a unit/range/remark, optionally grouped under section headings —
+// no footnotes, confirmation-note checkboxes, or the Blood Donor Issue Form's
+// signature layout, since those are print-behavior code, not data a generic
+// builder can safely expose.
+export type CustomLabTemplate = {
+  id: number
+  name: string
+  has_unit: boolean
+  has_range: boolean
+  has_remark: boolean
+  rows: { id: number; kind: string; label: string; unit: string; reference_range: string; remark: string }[]
+}
+
+export function toLabTemplate(t: CustomLabTemplate): LabTemplate {
+  return {
+    name: t.name,
+    hasUnit: t.has_unit,
+    hasRange: t.has_range,
+    hasRemark: t.has_remark,
+    rows: t.rows.map((r) =>
+      r.kind === 'section'
+        ? { kind: 'section', label: r.label }
+        : { kind: 'row', id: `custom_${r.id}`, label: r.label, unit: r.unit, range: t.has_range ? r.reference_range : undefined, remark: r.remark },
+    ),
+  }
+}
+
+// Custom templates are looked up only when no built-in one matches, so an
+// official panel's name can never be silently shadowed by a lab-staff one.
+export function findAnyLabTemplate(testName: string, custom: CustomLabTemplate[]): LabTemplate | undefined {
+  return findLabTemplate(testName) ?? (() => {
+    const match = custom.find((t) => t.name === testName)
+    return match ? toLabTemplate(match) : undefined
+  })()
+}
