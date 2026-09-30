@@ -943,7 +943,7 @@ export default function CashierCounterPage() {
 
       {tab === 'expenses' && (
         <div className="space-y-4">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
             <div className="card space-y-3">
               <h3 className="font-semibold">Record Expense</h3>
               {petty && <div className="text-sm">Petty cash balance: <strong>{formatMoney(petty.balance)}</strong></div>}
@@ -1016,7 +1016,7 @@ export default function CashierCounterPage() {
       )}
 
       {tab === 'doctors' && (
-        <div className="grid lg:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div className="card space-y-3 max-w-md">
             <h3 className="font-semibold">Add Doctor</h3>
             <p className="text-xs text-slate-500">Reception counter မှာ ဆရာဝန် ရွေးချယ်နိုင်ပါမယ်</p>
@@ -1143,7 +1143,7 @@ export default function CashierCounterPage() {
             ))}
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
             <div className="card space-y-3 max-w-md">
               <h3 className="font-semibold">Add {serviceDept === 'lab' ? 'Lab Test' : serviceDept === 'xray' ? 'X-Ray Service' : 'USG Service'}</h3>
               <p className="text-xs text-slate-500">ဒီနေရာမှာ ထည့်ထားတဲ့ item တွေကိုပဲ Lab/X-Ray/USG counter တွေမှာ order လုပ်လို့ရမှာပါ</p>
