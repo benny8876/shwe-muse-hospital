@@ -78,10 +78,6 @@ export default function ReceptionCounterPage() {
   const [apNotes, setApNotes] = useState('')
   const [apBusy, setApBusy] = useState(false)
 
-  const [queueTokens, setQueueTokens] = useState<any[]>([])
-  const [queueByDoctor, setQueueByDoctor] = useState<any[]>([])
-  const [queueBusy, setQueueBusy] = useState(false)
-
   const [depositPick, setDepositPick] = useState<any | null>(null)
   const [extraDepositAmount, setExtraDepositAmount] = useState('')
   const [extraDepositMethod, setExtraDepositMethod] = useState('cash')
@@ -260,65 +256,6 @@ export default function ReceptionCounterPage() {
     setTab('register')
   }
 
-  const loadQueue = useCallback(async () => {
-    try {
-      const { data } = await api.get('/queue-dashboard', { params: { branch_id: branchId } })
-      setQueueTokens(data.tokens)
-      setQueueByDoctor(data.by_doctor)
-    } catch (e) {
-      toast.error(getApiError(e))
-    }
-  }, [branchId, toast])
-
-  useEffect(() => {
-    if (tab !== 'queue') return
-    void loadQueue()
-    const id = setInterval(() => { void loadQueue() }, 8000)
-    return () => clearInterval(id)
-  }, [tab, loadQueue])
-
-  async function callToken(tokenId: number) {
-    setQueueBusy(true)
-    try {
-      await api.patch(`/queue/${tokenId}/call`)
-      await loadQueue()
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setQueueBusy(false)
-    }
-  }
-
-  async function finishToken(tokenId: number) {
-    setQueueBusy(true)
-    try {
-      await api.patch(`/queue/${tokenId}/done`)
-      await loadQueue()
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setQueueBusy(false)
-    }
-  }
-
-  async function skipToken(tokenId: number) {
-    setQueueBusy(true)
-    try {
-      await api.patch(`/queue/${tokenId}/skip`)
-      await loadQueue()
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setQueueBusy(false)
-    }
-  }
-
-  function formatWait(seconds: number) {
-    const m = Math.floor(seconds / 60)
-    const s = seconds % 60
-    return `${m}:${String(s).padStart(2, '0')}`
-  }
-
   async function submitExtraDeposit() {
     if (!depositPick?.admission_id) return toast.error('IPD လူနာ ရွေးပါ')
     const amt = Number(extraDepositAmount)
@@ -420,7 +357,6 @@ export default function ReceptionCounterPage() {
       <Tabs tabs={[
         { id: 'register', label: 'Register' },
         { id: 'appointments', label: 'Appointments' },
-        { id: 'queue', label: 'Queue' },
         { id: 'ipd-deposit', label: 'IPD Deposit' },
         { id: 'convert', label: 'Convert OPD ⇄ IPD' },
         { id: 'history', label: 'Bill History' },
@@ -660,54 +596,6 @@ export default function ReceptionCounterPage() {
                 ) },
               ]}
               emptyText="No appointments found"
-            />
-          </div>
-        </div>
-      )}
-
-      {tab === 'queue' && (
-        <div className="space-y-4">
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {queueByDoctor.length === 0 && (
-              <div className="card text-sm text-slate-500">No one waiting right now</div>
-            )}
-            {queueByDoctor.map((b) => (
-              <div key={b.doctor_name} className="card space-y-1">
-                <div className="font-semibold text-slate-800 truncate">{b.doctor_name}</div>
-                <div className="text-sm text-slate-600">{b.waiting} waiting · {b.serving} in room</div>
-                {b.waiting > 0 && (
-                  <div className="text-xs text-slate-500">Avg wait {formatWait(b.avg_wait_seconds)}</div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div className="card">
-            <h3 className="font-semibold text-slate-800 mb-3">Waiting Room</h3>
-            <DataTable
-              rows={queueTokens}
-              keyField="token_id"
-              columns={[
-                { key: 'number', label: 'Token', render: (r) => String(r.number) },
-                { key: 'patient', label: 'Patient', render: (r) => `${r.patient_name} (${r.uhid})` },
-                { key: 'doctor', label: 'Doctor', render: (r) => String(r.doctor_name) },
-                { key: 'status', label: 'Status', render: (r) => <StatusBadge value={String(r.status)} /> },
-                { key: 'waited', label: 'Waited', render: (r) => formatWait(r.waited_seconds) },
-                { key: 'act', label: '', render: (r) => (
-                  <div className="flex gap-1">
-                    {r.status === 'waiting' && (
-                      <button type="button" disabled={queueBusy} className="btn btn-secondary btn-sm" onClick={() => callToken(r.token_id)}>Call</button>
-                    )}
-                    {r.status === 'serving' && (
-                      <button type="button" disabled={queueBusy} className="btn btn-primary btn-sm" onClick={() => finishToken(r.token_id)}>Done</button>
-                    )}
-                    {r.status === 'waiting' && (
-                      <button type="button" disabled={queueBusy} className="text-xs text-red-600 hover:underline" onClick={() => skipToken(r.token_id)}>Skip</button>
-                    )}
-                  </div>
-                ) },
-              ]}
-              emptyText="No one waiting right now"
             />
           </div>
         </div>
