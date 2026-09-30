@@ -7,6 +7,7 @@ from app.core.deps import require
 from app.db.session import get_db
 from app.models.ancillary import LabOrder, OTSchedule, RadiologyOrder, ServiceOrder
 from app.models.catalog import CatalogItem
+from app.models.users import User
 from app.schemas.actions import OTScheduleIn, RadiologyOrderIn
 from app.schemas.common import LabOrderIn, ServiceOrderIn
 from app.services.billing_service import add_line, create_invoice
