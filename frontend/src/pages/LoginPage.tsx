@@ -34,7 +34,9 @@ export default function LoginPage() {
     try {
       const s = await login(username, password)
       toast.success(`Welcome, ${s.full_name}`)
-      nav('/counter')
+      // Admin roles land on their own Admin Panel route, kept separate from
+      // day-to-day counter operations — everyone else still goes to /counter.
+      nav(s.role === 'super_admin' || s.role === 'hospital_admin' ? '/admin' : '/counter')
     } catch (err) {
       const msg = getApiError(err) || 'Invalid login'
       setError(msg)

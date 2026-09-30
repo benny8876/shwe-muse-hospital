@@ -112,19 +112,43 @@ def counter_reception(data: ReceptionRegisterIn, db: Session = Depends(get_db), 
 
 
 @router.get("/active-patients")
-def active_patients(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require("pharmacy", "radiology", "front_desk", "pos", "billing.read", "patients.read"))):
-    rows = (
+def active_patients(
+    branch_id: int,
+    q: str = "",
+    doctor_id: int | None = None,
+    limit: int = 50,
+    with_total: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("pharmacy", "radiology", "front_desk", "pos", "billing.read", "patients.read")),
+):
+    query = (
         db.query(Invoice, Patient)
         .join(Patient, Invoice.patient_id == Patient.id)
+        .options(joinedload(Invoice.doctor))
         .filter(
             Invoice.branch_id == branch_id,
             Invoice.status.in_(["draft", "open", "partial"]),
         )
-        .order_by(Invoice.id.desc())
-        .limit(50)
-        .all()
     )
-    return [
+    if doctor_id:
+        query = query.filter(Invoice.doctor_id == doctor_id)
+    q = q.strip()
+    if q:
+        like = f"%{q}%"
+        conditions = [
+            Patient.name.ilike(like),
+            Patient.name_mm.ilike(like),
+            Patient.uhid.ilike(like),
+            Patient.phone.ilike(like),
+            Invoice.number.ilike(like),
+            User.full_name.ilike(like),
+        ]
+        if q.isdigit():
+            conditions.append(Patient.id == int(q))
+        query = query.outerjoin(User, Invoice.doctor_id == User.id).filter(or_(*conditions))
+    total = query.order_by(None).count() if with_total else None
+    rows = query.order_by(Invoice.id.desc()).limit(limit).all()
+    items = [
         {
             "patient_id": p.id,
             "name": p.name,
@@ -135,11 +159,19 @@ def active_patients(branch_id: int, db: Session = Depends(get_db), _: User = Dep
             "invoice_kind": inv.kind,
             "invoice_status": inv.status,
             "admission_id": inv.admission_id,
+            "doctor_id": inv.doctor_id,
+            "doctor_name": inv.doctor.full_name if inv.doctor else "",
             "total": inv.total,
             "balance": inv.balance,
         }
         for inv, p in rows
     ]
+    # Existing callers (Nurse, Reception) expect a bare array — only opt-in
+    # callers passing with_total=true (the "Load more" waiting-list UI) get
+    # the wrapped shape with a total count to size the button/counter against.
+    if with_total:
+        return {"items": items, "total": total}
+    return items
 
 
 @router.get("/wards")
@@ -192,10 +224,11 @@ def patient_open_invoice(
         return None
     inv = (
         db.query(Invoice)
-        .options(joinedload(Invoice.lines), joinedload(Invoice.payments))
+        .options(joinedload(Invoice.lines), joinedload(Invoice.payments), joinedload(Invoice.doctor))
         .filter(Invoice.id == inv.id)
         .first()
     )
+    inv.doctor_name = inv.doctor.full_name if inv.doctor else ""
     return inv
 
 
@@ -530,6 +563,11 @@ def counter_lab_order_detail(order_id: int, db: Session = Depends(get_db), _: Us
     if not order:
         raise HTTPException(404, "Lab order not found")
     patient = db.get(Patient, order.patient_id)
+    # The attending doctor for this specific order (carried over from the OPD
+    # invoice at order time) is a far more reliable "referring doctor" than
+    # Patient.referring_doctor, which is a free-text registration field that's
+    # rarely filled in practice.
+    doctor = db.get(User, order.doctor_id) if order.doctor_id else None
     return {
         "order_id": order.id,
         "patient_name": patient.name if patient else "",
@@ -538,6 +576,7 @@ def counter_lab_order_detail(order_id: int, db: Session = Depends(get_db), _: Us
         "age_months": patient.age_months if patient else None,
         "age_days": patient.age_days if patient else None,
         "gender": patient.gender if patient else "",
+        "referring_doctor": doctor.full_name if doctor else (patient.referring_doctor if patient else ""),
         "tests": order.tests,
         "result": order.result,
         "status": order.status,
@@ -876,6 +915,10 @@ def counter_radiology_order_detail(order_id: int, db: Session = Depends(get_db),
     if not order:
         raise HTTPException(404, "Radiology order not found")
     patient = db.get(Patient, order.patient_id)
+    # See counter_lab_order_detail: the order's own doctor_id (the OPD
+    # invoice's attending doctor at order time) is far more reliable than
+    # Patient.referring_doctor, which is rarely filled in practice.
+    doctor = db.get(User, order.doctor_id) if order.doctor_id else None
     return {
         "order_id": order.id,
         "patient_name": patient.name if patient else "",
@@ -884,6 +927,7 @@ def counter_radiology_order_detail(order_id: int, db: Session = Depends(get_db),
         "age_months": patient.age_months if patient else None,
         "age_days": patient.age_days if patient else None,
         "gender": patient.gender if patient else "",
+        "referring_doctor": doctor.full_name if doctor else (patient.referring_doctor if patient else ""),
         "modality": order.modality,
         "findings": order.findings,
         "status": order.status,

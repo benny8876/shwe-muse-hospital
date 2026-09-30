@@ -53,6 +53,11 @@ def _ensure_schema() -> None:
                 conn.execute(text("ALTER TABLE expenses ADD COLUMN name VARCHAR(120) DEFAULT ''"))
             if "paid_by" not in cols:
                 conn.execute(text("ALTER TABLE expenses ADD COLUMN paid_by VARCHAR(80) DEFAULT ''"))
+    if "appointments" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("appointments")}
+        if "duration_minutes" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE appointments ADD COLUMN duration_minutes INTEGER DEFAULT 15"))
     db = SessionLocal()
     try:
         db.execute(

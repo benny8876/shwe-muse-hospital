@@ -21,6 +21,7 @@ type ActivePatient = {
   invoice_id: number
   invoice_number: string
   invoice_kind?: string
+  doctor_name?: string
   total?: number
   balance?: number
 }
@@ -52,8 +53,22 @@ export default function XrayCounterPage() {
   const toast = useToast()
   const [tab, setTab] = useState<'order' | 'results' | 'history'>('order')
   const [listQuery, setListQuery] = useState('')
-  const [query, setQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [doctorFilter, setDoctorFilter] = useState('')
+
+  // Debounce so typing drives a server-side search (scales past the
+  // active-patients row limit) instead of only filtering an already-loaded page.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(listQuery.trim()), 300)
+    return () => clearTimeout(id)
+  }, [listQuery])
+  const [visibleLimit, setVisibleLimit] = useState(50)
+  const [activeTotal, setActiveTotal] = useState(0)
+  // A fresh search should start from the first page again, not stay wherever
+  // "Load more" had scrolled the previous query to.
+  useEffect(() => {
+    setVisibleLimit(50)
+  }, [debouncedQuery])
   const [activePatients, setActivePatients] = useState<ActivePatient[]>([])
   const [patient, setPatient] = useState<ActivePatient | null>(null)
   const [invoice, setInvoice] = useState<any>(null)
@@ -64,6 +79,7 @@ export default function XrayCounterPage() {
   const [impression, setImpression] = useState('')
   const [reporterName, setReporterName] = useState('')
   const [selectedOrder, setSelectedOrder] = useState<RadiologyOrderRow | null>(null)
+  const [selectedPatientDetail, setSelectedPatientDetail] = useState<any>(null)
   const [resultPatient, setResultPatient] = useState<{ patient_id: number; name: string; uhid: string } | null>(null)
   const [resultQuery, setResultQuery] = useState('')
   const [resultSearchResults, setResultSearchResults] = useState<any[]>([])
@@ -102,12 +118,13 @@ export default function XrayCounterPage() {
 
   const loadActive = useCallback(async () => {
     try {
-      const { data } = await api.get('/counter/active-patients', { params: { branch_id: branchId } })
-      setActivePatients(data)
+      const { data } = await api.get('/counter/active-patients', { params: { branch_id: branchId, q: debouncedQuery, limit: visibleLimit, with_total: true } })
+      setActivePatients(data.items)
+      setActiveTotal(data.total)
     } catch (e) {
       toast.error(getApiError(e))
     }
-  }, [branchId, toast])
+  }, [branchId, debouncedQuery, visibleLimit, toast])
 
   useEffect(() => {
     if (tab === 'history') void loadHistory()
@@ -127,6 +144,12 @@ export default function XrayCounterPage() {
 
   function applyFindings(o: RadiologyOrderRow) {
     setSelectedOrder(o)
+    setSelectedPatientDetail(null)
+    // The order-detail endpoint's referring_doctor comes from the order's own
+    // doctor_id (the OPD invoice's attending doctor at order time) — far more
+    // reliably populated than Patient.referring_doctor, a rarely-filled
+    // registration field.
+    api.get(`/counter/radiology/${o.order_id}`).then((r) => setSelectedPatientDetail(r.data)).catch(() => setSelectedPatientDetail(null))
     const parsed = parseRadiologyFindings(o.findings)
     setResultText(parsed.body)
     setExamType(parsed.examType)
@@ -163,29 +186,20 @@ export default function XrayCounterPage() {
     }
   }
 
-  async function search() {
-    if (!query.trim()) return
-    setBusy(true)
-    try {
-      const { data } = await api.get('/patients', { params: { q: query } })
-      setSearchResults(data)
-      if (!data.length) toast.error('Patient not found')
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const doctorFilterOptions = Array.from(new Set(activePatients.map((p) => p.doctor_name).filter(Boolean))).sort() as string[]
 
   const filteredPatients = activePatients.filter((p) => {
+    if (doctorFilter && p.doctor_name !== doctorFilter) return false
     const q = listQuery.trim().toLowerCase()
     if (!q) return true
     return (
       p.name.toLowerCase().includes(q)
       || p.uhid.toLowerCase().includes(q)
+      || String(p.patient_id).includes(q)
       || p.invoice_number.toLowerCase().includes(q)
       || (p.phone || '').toLowerCase().includes(q)
       || (p.invoice_kind || 'opd').toLowerCase().includes(q)
+      || (p.doctor_name || '').toLowerCase().includes(q)
     )
   })
 
@@ -232,44 +246,10 @@ export default function XrayCounterPage() {
     }
   }
 
-  async function selectFromSearch(p: any) {
-    const match = activePatients.find((a) => a.patient_id === p.id)
-    if (match) {
-      await selectPatient(match)
-      return
-    }
-    setBusy(true)
-    try {
-      const { data } = await api.get(`/counter/patient/${p.id}/invoice`, { params: { branch_id: branchId } })
-      if (!data) {
-        toast.error('No open bill — send to Reception first')
-        return
-      }
-      const row: ActivePatient = {
-        patient_id: p.id,
-        name: p.name,
-        uhid: p.uhid,
-        phone: p.phone,
-        invoice_id: data.id,
-        invoice_number: data.number,
-        invoice_kind: data.kind,
-        total: data.total,
-        balance: data.balance,
-      }
-      setPatient(row)
-      setInvoice(data)
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   function changePatient() {
     setPatient(null)
     setInvoice(null)
-    setQuery('')
-    setSearchResults([])
+    setListQuery('')
   }
 
   async function searchResultPatient() {
@@ -329,6 +309,9 @@ export default function XrayCounterPage() {
                       Bill {invoice?.number || patient.invoice_number}
                       <StatusBadge value={(patient.invoice_kind || invoice?.kind || 'opd').toUpperCase()} />
                     </div>
+                    {(invoice?.doctor_name || patient.doctor_name) && (
+                      <div className="text-xs text-slate-500">{invoice?.doctor_name || patient.doctor_name}</div>
+                    )}
                   </div>
                 </div>
                 <button type="button" className="btn btn-secondary btn-sm shrink-0" onClick={changePatient}>Change patient</button>
@@ -337,27 +320,17 @@ export default function XrayCounterPage() {
               <>
                 <h3 className="font-semibold text-slate-800">Patient Select</h3>
                 <div className="flex gap-2">
-                  <input className="input" placeholder="Search name / ID / father / phone" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
-                  <button type="button" disabled={busy} className="btn btn-secondary btn-sm shrink-0" onClick={search}>Go</button>
-                </div>
-                {searchResults.length > 0 && (
-                  <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
-                    {searchResults.map((p) => (
-                      <button
-                        type="button"
-                        key={p.id}
-                        className="rounded-full border border-slate-300 px-3 py-1.5 text-sm hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)] cursor-pointer"
-                        onClick={() => selectFromSearch(p)}
-                      >
-                        {p.name} · {p.uhid}
-                      </button>
+                  <input className="input" placeholder="Search name / UHID / ID / phone / doctor..." value={listQuery} onChange={(e) => setListQuery(e.target.value)} />
+                  <select className="input w-40 shrink-0" value={doctorFilter} onChange={(e) => setDoctorFilter(e.target.value)}>
+                    <option value="">All doctors</option>
+                    {doctorFilterOptions.map((d) => (
+                      <option key={d} value={d}>{d}</option>
                     ))}
-                  </div>
-                )}
-                <input className="input" placeholder="Filter waiting patients..." value={listQuery} onChange={(e) => setListQuery(e.target.value)} />
+                  </select>
+                </div>
                 <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                  {activePatients.length === 0 && <div className="text-slate-500 text-sm py-2">No open bills yet — register at Reception first</div>}
-                  {activePatients.length > 0 && filteredPatients.length === 0 && <div className="text-slate-500 text-sm py-2">No match for &quot;{listQuery}&quot;</div>}
+                  {activePatients.length === 0 && !listQuery && <div className="text-slate-500 text-sm py-2">No open bills yet — register at Reception first</div>}
+                  {filteredPatients.length === 0 && listQuery && <div className="text-slate-500 text-sm py-2">No open bill matching &quot;{listQuery}&quot; — send to Reception first</div>}
                   {filteredPatients.map((p) => (
                     <button
                       type="button"
@@ -365,10 +338,18 @@ export default function XrayCounterPage() {
                       onClick={() => selectPatient(p)}
                       className="rounded-full border border-slate-300 px-3 py-1.5 text-sm cursor-pointer transition-colors hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)]"
                     >
-                      {p.name} <span className="opacity-70">· {p.uhid}</span>
+                      {p.name} <span className="opacity-70">· {p.uhid}{p.doctor_name ? ` · ${p.doctor_name}` : ''}</span>
                     </button>
                   ))}
                 </div>
+                {activePatients.length < activeTotal && (
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>Showing {activePatients.length} of {activeTotal}</span>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVisibleLimit((v) => v + 50)}>
+                      Load more ({activeTotal - activePatients.length} left)
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -532,6 +513,7 @@ export default function XrayCounterPage() {
                 title="X-Ray Report"
                 patientName={selectedOrder.patient_name}
                 uhid={selectedOrder.uhid}
+                doctorName={selectedPatientDetail?.referring_doctor}
                 date={selectedOrder.created_at}
                 bodyLabel="Findings"
                 bodyText={resultText}

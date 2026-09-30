@@ -17,6 +17,10 @@ export type LabTemplate = {
   patientLabel?: string
   hasUnit: boolean
   hasRange: boolean
+  // Some panels (ABO/Rh, Widal, Urine Routine, Sputum/Stool AFB) have no use
+  // for a free-text Remark column — set false to drop it and give the Result
+  // column the extra width instead. Defaults to true when omitted.
+  hasRemark?: boolean
   rows: LabRow[]
   footnotes?: string[]
   // When set, footnotes stay off the printed page until the lab tech ticks
@@ -27,6 +31,10 @@ export type LabTemplate = {
   // positive — the lab tech ticks a checkbox when entering the result, and
   // only then does that line print (see LabTemplateResult.tsx).
   hasConfirmationNote?: boolean
+  // Blood Donor Issue Form's print swaps the generic "Consultant Pathologist"
+  // signature for a "Done By" line, a numbered transfusion-safety notice, and
+  // an Issued by / Received By signature pair — see LabTemplateResult.tsx.
+  hasBloodDonorNotice?: boolean
 }
 
 function row(id: string, label: string, unit?: string, range?: string, remark?: string): LabRow {
@@ -193,6 +201,7 @@ export const LAB_TEMPLATES: LabTemplate[] = [
     name: 'ABO and Rh Blood Grouping',
     hasUnit: false,
     hasRange: false,
+    hasRemark: false,
     rows: [
       row('abo', 'ABO Grouping'),
       row('rh', 'Rh Grouping'),
@@ -227,6 +236,7 @@ export const LAB_TEMPLATES: LabTemplate[] = [
     name: 'Urine Routine Examination',
     hasUnit: false,
     hasRange: true,
+    hasRemark: false,
     rows: [
       section('Urine Analysis'),
       row('leu', 'Leukocytes (LEU)', '', '9 - 15 Leu/ul'),
@@ -255,6 +265,7 @@ export const LAB_TEMPLATES: LabTemplate[] = [
     patientLabel: "Donor Name",
     hasUnit: true,
     hasRange: true,
+    hasBloodDonorNotice: true,
     rows: [
       row('hb', 'Hb%', 'g/dL', 'Male: 12.5-15.5 / Female: 11.5-14.5'),
       row('abo', 'ABO Grouping'),
@@ -281,18 +292,17 @@ export const LAB_TEMPLATES: LabTemplate[] = [
       row('d64', 'RPR (1 in 64 dilution)'),
       row('d128', 'RPR (1 in 128 dilution)'),
     ],
-    footnotes: ['*** END OF REPORT ***'],
   },
   {
     name: 'Widal Test',
     hasUnit: false,
     hasRange: false,
+    hasRemark: false,
     rows: [
       { kind: 'row2', id: 'styphi', label: 'Sal. Typhi', col1: 'O Antibody', col2: 'H Antibody' },
       { kind: 'row2', id: 'sparaa', label: 'Sal. Para Typhi A', col1: 'O Antibody', col2: 'H Antibody' },
       { kind: 'row2', id: 'sparab', label: 'Sal. Para Typhi B', col1: 'O Antibody', col2: 'H Antibody' },
     ],
-    footnotes: ['*** END OF REPORT ***'],
   },
   {
     name: 'Semen Analysis',
@@ -324,6 +334,7 @@ export const LAB_TEMPLATES: LabTemplate[] = [
     name: 'Sputum and Stool AFB',
     hasUnit: false,
     hasRange: false,
+    hasRemark: false,
     rows: [
       row('day1', 'Sputum for AFB (1st day)'),
       row('day2', 'Sputum for AFB (2nd day)'),
@@ -388,14 +399,13 @@ export const LAB_TEMPLATES: LabTemplate[] = [
         ],
       },
     ],
-    footnotes: ['*** END OF REPORT ***'],
   },
   {
     name: 'Urine Protein Creatinine Ratio (UPCR)',
     hasUnit: true,
     hasRange: true,
     rows: [
-      row('u_protein', 'Urine Protein', 'mg/dL', '<= 15'),
+      row('u_protein', 'Urine Protein', 'mg/dL', '< 15'),
       row('u_creatinine', 'Urine Creatinine', 'mg/dL', '29 - 226'),
       row('upcr', 'Urine Protein Creatinine Ratio', 'mg/mg', '< 0.15'),
       { kind: 'text', id: 'comment', label: 'Comment' },
@@ -403,13 +413,12 @@ export const LAB_TEMPLATES: LabTemplate[] = [
         kind: 'info',
         headers: ['Ratio', 'Interpretation'],
         rows: [
-          ['Less than 0.2', 'Normal range'],
+          ['Less than 0.2', 'Normal'],
           ['0.2 - 3.5', 'Moderately increased'],
           ['More than 3.5', 'Increased'],
         ],
       },
     ],
-    footnotes: ['*** END OF REPORT ***'],
   },
   {
     name: 'Blood Film Report',

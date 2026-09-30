@@ -14,7 +14,7 @@ from app.models.patients import Patient
 from app.models.users import User
 from app.services.billing_service import add_line, create_invoice, recalc_invoice
 from app.services.inventory_service import dispense, stock_on_hand
-from app.services.utils import audit, next_number
+from app.services.utils import audit, next_number, next_uhid
 
 
 def get_open_invoice(db: Session, patient_id: int, branch_id: int, kind: str | None = None) -> Invoice | None:
@@ -132,7 +132,7 @@ def reception_register(
         if age_days is not None and not 0 <= age_days <= 30:
             raise ValueError("Days must be between 0 and 30")
         patient = Patient(
-            uhid=next_number(db, "uhid", "ID-"),
+            uhid=next_uhid(db),
             name=name.strip(),
             phone=phone,
             gender=gender,
@@ -361,7 +361,7 @@ def pharmacy_walk_in_sale(db: Session, *, branch_id: int, name: str = "", phone:
     billing path (POST /counter/pharmacy) can dispense to them exactly like a
     Reception-registered patient, no separate registration step needed."""
     patient = Patient(
-        uhid=next_number(db, "uhid", "ID-"),
+        uhid=next_uhid(db),
         name=name.strip() or "Walk-in Customer",
         phone=phone,
         gender="",
@@ -517,7 +517,7 @@ def lab_walk_in(
     if age_years is not None and age_years < 0:
         raise ValueError("Years must be 0 or more")
     patient = Patient(
-        uhid=next_number(db, "uhid", "ID-"),
+        uhid=next_uhid(db),
         name=name.strip(),
         phone=phone.strip(),
         gender=gender.strip(),

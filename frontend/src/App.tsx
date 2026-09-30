@@ -8,6 +8,7 @@ import DevLayout from './layouts/DevLayout'
 import CounterGuard from './components/CounterGuard'
 import AdminStaffPage from './modules/admin/AdminStaffPage'
 import AdminWardsPage from './modules/admin/AdminWardsPage'
+import OwnerPanelPage from './modules/admin/OwnerPanelPage'
 import DeveloperAccountsPage from './modules/developer/DeveloperAccountsPage'
 import ReceptionCounterPage from './modules/counters/ReceptionCounterPage'
 import PatientRecordsPage from './modules/counters/PatientRecordsPage'
@@ -150,6 +151,7 @@ export default function App() {
       <Route path="/admin" element={<AdminOnly><AdminLayout /></AdminOnly>}>
         <Route path="staff" element={<AdminStaffPage />} />
         <Route path="wards" element={<AdminWardsPage />} />
+        <Route path="owner" element={<OwnerPanelPage />} />
         <Route index element={<Navigate to="/admin/staff" replace />} />
       </Route>
       <Route path="/app/*" element={<Navigate to="/counter/reception" replace />} />

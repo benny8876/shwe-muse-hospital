@@ -14,6 +14,7 @@ type LabOrderDetail = {
   age_months?: number | null
   age_days?: number | null
   gender: string
+  referring_doctor?: string
   tests: string
   result: string
   status: string
@@ -63,6 +64,7 @@ export default function LabReportView({ orderId }: { orderId: string | number })
         ageYears={order.age_years}
         ageMonths={order.age_months}
         gender={order.gender}
+        doctorName={order.referring_doctor}
         date={order.created_at}
         sampleId={order.sample_id}
       />
@@ -82,6 +84,7 @@ export default function LabReportView({ orderId }: { orderId: string | number })
           <div>ID: <strong>{order.uhid}</strong></div>
           <div>Lab No: <strong>{order.sample_id || '—'}</strong></div>
           <div>Date: <strong>{formatDate(order.created_at)}</strong></div>
+          <div>Referring Doctor: <strong>{order.referring_doctor || '—'}</strong></div>
         </div>
         <div className="text-sm font-medium text-slate-600 mb-1">{order.tests}</div>
         <div className="whitespace-pre-wrap border rounded-lg p-3 min-h-24 text-sm">{order.result || '—'}</div>

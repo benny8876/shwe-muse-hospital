@@ -221,12 +221,12 @@ function PhysicianEntry({
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="text-left" style={{ background: LAB_HEADER_BG }}>
-                <th className="px-2 py-2 font-semibold text-white text-xs uppercase text-center" title="Include in print">✓</th>
-                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Test Description</th>
-                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Result</th>
-                {template.hasUnit && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Unit</th>}
-                {template.hasRange && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Reference Range</th>}
-                <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Remark</th>
+                <th className="px-2 py-2 font-semibold text-white text-xs uppercase text-center whitespace-nowrap" title="Include in print">✓</th>
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Test</th>
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Result</th>
+                {template.hasUnit && <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Unit</th>}
+                {template.hasRange && <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Range</th>}
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Remark</th>
               </tr>
             </thead>
             <tbody>
@@ -255,7 +255,7 @@ function PhysicianEntry({
                           onChange={(e) => setField(values, onChange, includeKey(r.id), e.target.checked ? 'yes' : '')}
                         />
                       </td>
-                      <td className="px-3 py-2">{r.label}</td>
+                      <td className="px-3 py-2 break-words">{r.label}</td>
                       <td className="px-3 py-2">
                         <input
                           id={`lab-res-${r.id}`}
@@ -268,8 +268,8 @@ function PhysicianEntry({
                           }}
                         />
                       </td>
-                      {template.hasUnit && <td className="px-3 py-2 text-slate-500">{r.unit || '—'}</td>}
-                      {template.hasRange && <td className="px-3 py-2 text-slate-500">{rangeFor(r.id, r.range)}</td>}
+                      {template.hasUnit && <td className="px-3 py-2 text-slate-500 break-words">{r.unit || '—'}</td>}
+                      {template.hasRange && <td className="px-3 py-2 text-slate-500 break-words">{rangeFor(r.id, r.range)}</td>}
                       <td className="px-3 py-2">
                         <input
                           className="input !py-1"
@@ -291,9 +291,19 @@ function PhysicianEntry({
 }
 
 export default function LabTemplateResult({ template, values, onChange, patientName, uhid, age, ageYears, ageMonths, gender, doctorName, date, sampleId, readOnly }: Props) {
-  const cols = 2 + (template.hasUnit ? 1 : 0) + (template.hasRange ? 1 : 0) + 1
+  const hasRemark = template.hasRemark !== false
+  // A row2 row (e.g. Widal's O/H Antibody pair) needs two real value columns
+  // instead of one Result column — grab the first row2's col1/col2 labels to
+  // head those columns, rather than squeezing both values into one cell under
+  // a single generic "Result" header.
+  const row2Row = template.rows.find((r): r is Extract<LabRow, { kind: 'row2' }> => r.kind === 'row2')
+  const cols = (row2Row ? 3 : 2) + (template.hasUnit ? 1 : 0) + (template.hasRange ? 1 : 0) + (hasRemark ? 1 : 0)
   const editCols = cols + 1
   const physician = template.name === 'General Physician Panel'
+  // Templates built entirely from free-text/checkbox rows (e.g. Blood Film
+  // Report) have no use for the Test Description/Result/Remark table header —
+  // every row already prints as its own full-width "Label: value" line.
+  const hasTabularRows = template.rows.some((r) => r.kind === 'row' || r.kind === 'row2')
   function rangeFor(id: string, fallback?: string) {
     if (!physician) return fallback || '—'
     return physicianReferenceRange(id, ageYears, ageMonths, gender) || fallback || '—'
@@ -330,16 +340,25 @@ export default function LabTemplateResult({ template, values, onChange, patientN
       {!readOnly && !physician && (
       <div className="no-print card overflow-auto p-0">
         <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="text-left" style={{ background: LAB_HEADER_BG }}>
-              <th className="px-2 py-2 font-semibold text-white text-xs uppercase text-center" title="Include in print">✓</th>
-              <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Test Description</th>
-              <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Result</th>
-              {template.hasUnit && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Unit</th>}
-              {template.hasRange && <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Reference Range</th>}
-              <th className="px-3 py-2 font-semibold text-white text-xs uppercase">Remark</th>
-            </tr>
-          </thead>
+          {hasTabularRows && (
+            <thead>
+              <tr className="text-left" style={{ background: LAB_HEADER_BG }}>
+                <th className="px-2 py-2 font-semibold text-white text-xs uppercase text-center whitespace-nowrap" title="Include in print">✓</th>
+                <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Test</th>
+                {row2Row ? (
+                  <>
+                    <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">{row2Row.col1}</th>
+                    <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">{row2Row.col2}</th>
+                  </>
+                ) : (
+                  <th className={`px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap ${hasRemark ? '' : 'w-2/5'}`}>Result</th>
+                )}
+                {template.hasUnit && <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Unit</th>}
+                {template.hasRange && <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Range</th>}
+                {hasRemark && <th className="px-3 py-2 font-semibold text-white text-xs uppercase whitespace-nowrap">Remark</th>}
+              </tr>
+            </thead>
+          )}
           <tbody>
             {template.rows.map((r, idx) => {
               if (r.kind === 'section') {
@@ -416,11 +435,11 @@ export default function LabTemplateResult({ template, values, onChange, patientN
                   <tr key={r.id} className="border-b border-slate-100">
                     <td className="px-2 py-2" />
                     <td className="px-3 py-2">{r.label}</td>
-                    <td colSpan={cols - 1} className="px-3 py-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <input className="input" placeholder={r.col1} value={val.col1} onChange={(e) => setField(values, onChange, r.id, { ...val, col1: e.target.value })} />
-                        <input className="input" placeholder={r.col2} value={val.col2} onChange={(e) => setField(values, onChange, r.id, { ...val, col2: e.target.value })} />
-                      </div>
+                    <td className="px-3 py-2">
+                      <input className="input" placeholder={r.col1} value={val.col1} onChange={(e) => setField(values, onChange, r.id, { ...val, col1: e.target.value })} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input className="input" placeholder={r.col2} value={val.col2} onChange={(e) => setField(values, onChange, r.id, { ...val, col2: e.target.value })} />
                     </td>
                   </tr>
                 )
@@ -434,20 +453,22 @@ export default function LabTemplateResult({ template, values, onChange, patientN
                       onChange={(e) => setField(values, onChange, includeKey(r.id), e.target.checked ? 'yes' : '')}
                     />
                   </td>
-                  <td className="px-3 py-2">{r.label}</td>
+                  <td className="px-3 py-2 break-words">{r.label}</td>
                   <td className="px-3 py-2">
                     <input className="input !py-1" value={(values[r.id] as string) || ''} onChange={(e) => setField(values, onChange, r.id, e.target.value)} />
                   </td>
-                  {template.hasUnit && <td className="px-3 py-2 text-slate-500">{r.unit || '—'}</td>}
-                  {template.hasRange && <td className="px-3 py-2 text-slate-500">{rangeFor(r.id, r.range)}</td>}
-                  <td className="px-3 py-2">
-                    <input
-                      className="input !py-1"
-                      placeholder={r.remark || '—'}
-                      value={(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}
-                      onChange={(e) => setField(values, onChange, remarkKey(r.id), e.target.value)}
-                    />
-                  </td>
+                  {template.hasUnit && <td className="px-3 py-2 text-slate-500 break-words">{r.unit || '—'}</td>}
+                  {template.hasRange && <td className="px-3 py-2 text-slate-500 break-words">{rangeFor(r.id, r.range)}</td>}
+                  {hasRemark && (
+                    <td className="px-3 py-2">
+                      <input
+                        className="input !py-1"
+                        placeholder={r.remark || '—'}
+                        value={(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}
+                        onChange={(e) => setField(values, onChange, remarkKey(r.id), e.target.value)}
+                      />
+                    </td>
+                  )}
                 </tr>
               )
             })}
@@ -493,16 +514,25 @@ export default function LabTemplateResult({ template, values, onChange, patientN
           {doctorName && <div>Referred by (Dr.): <strong>{doctorName}</strong></div>}
         </div>
         <div className="text-center text-lg font-bold py-1 mb-3" style={{ background: LAB_SECTION_BG }}>LABORATORY REPORT</div>
-        <table className="w-full text-sm border-collapse mb-3">
-          <thead>
-            <tr className="text-left" style={{ background: LAB_HEADER_BG, color: 'white' }}>
-              <th className="border border-slate-300 px-2 py-1">Test Description</th>
-              <th className="border border-slate-300 px-2 py-1">Result</th>
-              {template.hasUnit && <th className="border border-slate-300 px-2 py-1">Unit</th>}
-              {template.hasRange && <th className="border border-slate-300 px-2 py-1">Reference Range</th>}
-              <th className="border border-slate-300 px-2 py-1">Remark</th>
-            </tr>
-          </thead>
+        <table className="w-full text-sm border-collapse mb-3 table-fixed">
+          {hasTabularRows && (
+            <thead>
+              <tr className="text-left" style={{ background: LAB_HEADER_BG, color: 'white' }}>
+                <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">Test</th>
+                {row2Row ? (
+                  <>
+                    <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">{row2Row.col1}</th>
+                    <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">{row2Row.col2}</th>
+                  </>
+                ) : (
+                  <th className={`border border-slate-300 px-2 py-1 whitespace-nowrap ${hasRemark ? '' : 'w-2/5'}`}>Result</th>
+                )}
+                {template.hasUnit && <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">Unit</th>}
+                {template.hasRange && <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">Range</th>}
+                {hasRemark && <th className="border border-slate-300 px-2 py-1 whitespace-nowrap">Remark</th>}
+              </tr>
+            </thead>
+          )}
           <tbody>
             {template.rows.map((r, idx) => {
               if (r.kind === 'section') {
@@ -538,7 +568,7 @@ export default function LabTemplateResult({ template, values, onChange, patientN
               if (r.kind === 'text') {
                 return (
                   <tr key={r.id}>
-                    <td colSpan={cols} className="border border-slate-300 px-2 py-1">
+                    <td colSpan={cols} className="border border-slate-300 px-2 py-1 break-words">
                       <strong>{r.label}:</strong> {(values[r.id] as string) || '—'}
                     </td>
                   </tr>
@@ -546,11 +576,11 @@ export default function LabTemplateResult({ template, values, onChange, patientN
               }
               if (r.kind === 'checkboxGroup') {
                 const selected = (values[r.id] as string[]) || []
+                if (selected.length === 0) return null
                 return (
                   <tr key={r.id}>
-                    <td colSpan={cols} className="border border-slate-300 px-2 py-1">
-                      <strong>{r.label}:</strong>{' '}
-                      {r.options.map((opt) => `${selected.includes(opt) ? '☑' : '☐'} ${opt}`).join('   ')}
+                    <td colSpan={cols} className="border border-slate-300 px-2 py-1 break-words">
+                      <strong>{r.label}:</strong> {selected.join(', ')}
                     </td>
                   </tr>
                 )
@@ -559,21 +589,20 @@ export default function LabTemplateResult({ template, values, onChange, patientN
                 const val = (values[r.id] as { col1: string; col2: string }) || { col1: '', col2: '' }
                 return (
                   <tr key={r.id}>
-                    <td className="border border-slate-300 px-2 py-1">{r.label}</td>
-                    <td colSpan={cols - 1} className="border border-slate-300 px-2 py-1">
-                      {r.col1}: {val.col1 || '—'} &nbsp;&nbsp; {r.col2}: {val.col2 || '—'}
-                    </td>
+                    <td className="border border-slate-300 px-2 py-1 break-words">{r.label}</td>
+                    <td className="border border-slate-300 px-2 py-1 break-words">{val.col1 || '—'}</td>
+                    <td className="border border-slate-300 px-2 py-1 break-words">{val.col2 || '—'}</td>
                   </tr>
                 )
               }
               if (values[includeKey(r.id)] !== 'yes') return null
               return (
                 <tr key={r.id}>
-                  <td className="border border-slate-300 px-2 py-1">{r.label}</td>
-                  <td className="border border-slate-300 px-2 py-1 font-semibold">{(values[r.id] as string) || ''}</td>
-                  {template.hasUnit && <td className="border border-slate-300 px-2 py-1">{r.unit || ''}</td>}
-                  {template.hasRange && <td className="border border-slate-300 px-2 py-1">{(() => { const range = rangeFor(r.id, r.range); return range === '—' ? '' : range })()}</td>}
-                  <td className="border border-slate-300 px-2 py-1">{(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}</td>
+                  <td className="border border-slate-300 px-2 py-1 break-words">{r.label}</td>
+                  <td className={`border border-slate-300 px-2 py-1 font-semibold break-words ${hasRemark ? '' : 'w-2/5'}`}>{(values[r.id] as string) || ''}</td>
+                  {template.hasUnit && <td className="border border-slate-300 px-2 py-1 break-words">{r.unit || ''}</td>}
+                  {template.hasRange && <td className="border border-slate-300 px-2 py-1 break-words">{(() => { const range = rangeFor(r.id, r.range); return range === '—' ? '' : range })()}</td>}
+                  {hasRemark && <td className="border border-slate-300 px-2 py-1 break-words">{(values[remarkKey(r.id)] as string) ?? r.remark ?? ''}</td>}
                 </tr>
               )
             })}
@@ -585,9 +614,29 @@ export default function LabTemplateResult({ template, values, onChange, patientN
             {template.hasConfirmationNote && values.confirmation_needed === 'yes' && <div>Confirmation will be necessary.</div>}
           </div>
         )}
-        <div className="flex justify-end mt-10 text-sm">
-          <div>_____________________<br />Consultant Pathologist</div>
-        </div>
+        {template.hasBloodDonorNotice ? (
+          <>
+            <div className="flex justify-end text-sm mb-4">
+              <div>Done By: <span className="inline-block w-48 border-b border-slate-400">&nbsp;</span></div>
+            </div>
+            <div className="text-sm border-t border-slate-300 pt-3">
+              <div className="font-bold mb-1.5">** Please Attention</div>
+              <ol className="list-decimal ml-5 space-y-1.5">
+                <li>No blood should be transfused without being checked by two person.</li>
+                <li>If the transfusion is not immediately required, blood should be kept in the ward refrigerator. ( Not more than 30 minutes at room temperature)</li>
+                <li>In case of transfusion reaction, a report must be made to the blood issued section, with a prescribed form accompanied by BLOOD ISSUED SECTION and a post transfusion clot sample 5 cc from vein different from transfused one.</li>
+              </ol>
+            </div>
+            <div className="flex justify-between mt-10 text-sm">
+              <div>Issued by: <span className="inline-block w-40 border-b border-slate-400">&nbsp;</span></div>
+              <div>Received By: <span className="inline-block w-40 border-b border-slate-400">&nbsp;</span></div>
+            </div>
+          </>
+        ) : (
+          <div className="flex justify-end mt-10 text-sm">
+            <div>_____________________<br />Consultant Pathologist</div>
+          </div>
+        )}
         <div className="text-center text-xs font-medium text-slate-600 mt-auto pt-8">
           ဓာတ်ခွဲခန်းအဖြေများကိုသက်ဆိုင်ရာဆရာဝန်များနှင့်သာမေးမြန်းဆွေးနွေးပါရန်
         </div>

@@ -11,7 +11,7 @@ from app.models.ipd import Bed, Ward
 from app.models.org import Branch, Sequence, Setting, Warehouse
 from app.models.patients import CorporateAccount, Patient
 from app.models.users import User
-from app.services.utils import next_number
+from app.services.utils import next_uhid
 
 # The 16 structured lab report panels the hospital's printed A4 templates cover
 # (frontend/src/lib/labTemplates.ts renders the matching structured result-entry
@@ -101,7 +101,7 @@ def seed(db: Session):
     db.flush()
 
     p1 = Patient(
-        uhid=next_number(db, "uhid", "ID-"),
+        uhid=next_uhid(db),
         name="Ma Thida",
         name_mm="မသီတာ",
         phone="09111111111",
@@ -112,7 +112,7 @@ def seed(db: Session):
         portal_pin="1111",
     )
     p2 = Patient(
-        uhid=next_number(db, "uhid", "ID-"),
+        uhid=next_uhid(db),
         name="U Kyaw",
         name_mm="ဦးကျော်",
         phone="09222222222",

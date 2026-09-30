@@ -90,6 +90,22 @@ class PatientOut(BaseModel):
         from_attributes = True
 
 
+class AppointmentOut(BaseModel):
+    id: int
+    patient_id: int
+    doctor_id: int
+    branch_id: int
+    scheduled_at: datetime
+    duration_minutes: int
+    source: str
+    status: str
+    notes: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class CatalogOut(BaseModel):
     id: int
     sku: str
@@ -128,6 +144,18 @@ class MultiPaymentIn(BaseModel):
     payments: list[PaymentIn]
 
 
+class RefundIn(BaseModel):
+    amount: float
+    method: str = ""
+    reason: str = ""
+
+
+class PharmacyLineIn(BaseModel):
+    item_id: int
+    warehouse_id: int
+    qty: float = 1
+
+
 class InvoiceLineOut(BaseModel):
     id: int
     description: str = ""
@@ -163,6 +191,8 @@ class InvoiceOut(BaseModel):
     balance: float
     kind: str
     admission_id: int | None = None
+    doctor_id: int | None = None
+    doctor_name: str = ""
     created_at: datetime | None = None
     lines: list[InvoiceLineOut] = []
     payments: list[PaymentOut] = []

@@ -14,6 +14,7 @@ class Appointment(Base):
     doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=15)
     source: Mapped[str] = mapped_column(String(20), default="counter")  # counter | phone | portal
     status: Mapped[str] = mapped_column(String(20), default="booked")  # booked | arrived | done | cancelled
     notes: Mapped[str] = mapped_column(Text, default="")

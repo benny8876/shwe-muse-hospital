@@ -360,45 +360,50 @@ export default function StoreCounterPage() {
             {deptLabel} — low stock, near-expiry (30 days), and expired batches for the selected warehouse. Refreshes every 30 seconds.
           </Alert>
 
-          <div className="card">
-            <h3 className="font-semibold text-slate-800 mb-2">Low Stock ({alerts.low_stock?.length || 0})</h3>
-            <DataTable
-              rows={alerts.low_stock || []}
-              columns={[
-                { key: 'name', label: 'Item', render: (r) => String(r.name) },
-                { key: 'qty', label: 'On Hand', render: (r) => <span className="text-red-600 font-semibold">{r.qty}</span> },
-                { key: 'min', label: 'Min', render: (r) => String(r.min) },
-              ]}
-              emptyText="No low stock alerts"
-            />
-          </div>
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="card">
+              <h3 className="font-semibold text-slate-800 mb-2">Low Stock ({alerts.low_stock?.length || 0})</h3>
+              <DataTable
+                rows={alerts.low_stock || []}
+                wrapperClassName="max-h-96"
+                columns={[
+                  { key: 'name', label: 'Item', render: (r) => String(r.name) },
+                  { key: 'qty', label: 'On Hand', render: (r) => <span className="text-red-600 font-semibold">{r.qty}</span> },
+                  { key: 'min', label: 'Min', render: (r) => String(r.min) },
+                ]}
+                emptyText="No low stock alerts"
+              />
+            </div>
 
-          <div className="card">
-            <h3 className="font-semibold text-slate-800 mb-2">Near Expiry ({alerts.near_expiry?.length || 0})</h3>
-            <DataTable
-              rows={alerts.near_expiry || []}
-              columns={[
-                { key: 'item', label: 'Item', render: (r) => String(r.item) },
-                { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
-                { key: 'expiry', label: 'Expiry', render: (r) => String(r.expiry) },
-                { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
-              ]}
-              emptyText="No near-expiry batches"
-            />
-          </div>
+            <div className="card">
+              <h3 className="font-semibold text-slate-800 mb-2">Near Expiry ({alerts.near_expiry?.length || 0})</h3>
+              <DataTable
+                rows={alerts.near_expiry || []}
+                wrapperClassName="max-h-96"
+                columns={[
+                  { key: 'item', label: 'Item', render: (r) => String(r.item) },
+                  { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
+                  { key: 'expiry', label: 'Expiry', render: (r) => String(r.expiry) },
+                  { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
+                ]}
+                emptyText="No near-expiry batches"
+              />
+            </div>
 
-          <div className="card">
-            <h3 className="font-semibold text-slate-800 mb-2">Expired ({alerts.expired?.length || 0})</h3>
-            <DataTable
-              rows={alerts.expired || []}
-              columns={[
-                { key: 'item', label: 'Item', render: (r) => String(r.item) },
-                { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
-                { key: 'expiry', label: 'Expiry', render: (r) => <span className="text-red-600 font-semibold">{r.expiry}</span> },
-                { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
-              ]}
-              emptyText="No expired batches"
-            />
+            <div className="card">
+              <h3 className="font-semibold text-slate-800 mb-2">Expired ({alerts.expired?.length || 0})</h3>
+              <DataTable
+                rows={alerts.expired || []}
+                wrapperClassName="max-h-96"
+                columns={[
+                  { key: 'item', label: 'Item', render: (r) => String(r.item) },
+                  { key: 'batch_no', label: 'Batch', render: (r) => String(r.batch_no) },
+                  { key: 'expiry', label: 'Expiry', render: (r) => <span className="text-red-600 font-semibold">{r.expiry}</span> },
+                  { key: 'qty', label: 'Qty', render: (r) => String(r.qty) },
+                ]}
+                emptyText="No expired batches"
+              />
+            </div>
           </div>
         </div>
       )}

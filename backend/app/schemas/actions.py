@@ -116,6 +116,24 @@ class WardMedOrderIn(BaseModel):
     items: list[WardMedOrderItemIn] = []
 
 
+class AppointmentIn(BaseModel):
+    patient_id: int
+    doctor_id: int
+    branch_id: int
+    scheduled_at: datetime
+    duration_minutes: int = 15
+    source: str = "counter"  # counter | phone | portal
+    notes: str = ""
+
+
+class AppointmentUpdateIn(BaseModel):
+    scheduled_at: datetime | None = None
+    doctor_id: int | None = None
+    duration_minutes: int | None = None
+    status: str | None = None  # booked | arrived | done | cancelled
+    notes: str | None = None
+
+
 class StockReceiveIn(BaseModel):
     item_id: int
     warehouse_id: int

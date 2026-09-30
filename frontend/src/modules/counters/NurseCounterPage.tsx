@@ -124,6 +124,8 @@ export default function NurseCounterPage() {
   async function selectAdmission(a: Admission) {
     setSelectedAdmission(a)
     setNoteText('')
+    setNotes([])
+    setVitals([])
     clearOrderState()
     try {
       const [notesRes, vitalsRes] = await Promise.all([

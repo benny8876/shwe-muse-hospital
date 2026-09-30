@@ -5,7 +5,7 @@ from app.models.billing import Invoice, InvoiceLine, Payment
 from app.models.catalog import CatalogItem
 from app.models.ipd import Admission
 from app.models.users import Commission, User
-from app.services.accounting_service import post_payment
+from app.services.accounting_service import post_payment, post_refund
 from app.services.utils import next_number
 
 
@@ -20,16 +20,25 @@ def recalc_invoice(inv: Invoice, db: Session | None = None):
         has_lines = (
             db.query(func.count(InvoiceLine.id)).filter(InvoiceLine.invoice_id == inv.id).scalar() or 0
         ) > 0
-        inv.paid = float(
+        gross = float(
             db.query(func.coalesce(func.sum(Payment.amount), 0.0))
             .filter(Payment.invoice_id == inv.id, Payment.method != "refund")
             .scalar()
             or 0
         )
+        refunded = float(
+            db.query(func.coalesce(func.sum(Payment.amount), 0.0))
+            .filter(Payment.invoice_id == inv.id, Payment.method == "refund")
+            .scalar()
+            or 0
+        )
+        inv.paid = max(gross - refunded, 0)
     else:
         inv.subtotal = sum(l.amount for l in inv.lines)
         has_lines = bool(inv.lines)
-        inv.paid = sum(p.amount for p in inv.payments if p.method != "refund")
+        gross = sum(p.amount for p in inv.payments if p.method != "refund")
+        refunded = sum(p.amount for p in inv.payments if p.method == "refund")
+        inv.paid = max(gross - refunded, 0)
     inv.total = max(inv.subtotal - inv.discount, 0)
     inv.balance = max(inv.total - inv.paid, 0)
 
@@ -123,6 +132,47 @@ def pay_invoice(db: Session, inv: Invoice, method: str, amount: float, user_id: 
     recalc_invoice(inv, db)
     post_payment(db, inv, p)
     return p
+
+
+def refund_payment(
+    db: Session,
+    inv: Invoice,
+    *,
+    amount: float,
+    user_id: int,
+    method: str = "",
+    reason: str = "",
+    shift_id: int | None = None,
+) -> Payment:
+    """Records money paid back to the patient — a correction to an existing
+    payment (wrong amount entered, cancelled service already paid for), not a
+    new charge. Stored as its own Payment row (method="refund", amount kept
+    positive like every other payment) rather than mutating the original
+    payment, so both the original collection and the refund stay visible in
+    the invoice's payment history."""
+    if amount <= 0:
+        raise ValueError("Refund amount must be positive")
+    recalc_invoice(inv, db)
+    if amount > inv.paid + 0.01:
+        raise ValueError(f"Refund cannot exceed amount paid ({inv.paid:.0f})")
+    p = Payment(invoice_id=inv.id, shift_id=shift_id, method="refund", amount=amount, received_by=user_id, notes=reason)
+    inv.payments.append(p)
+    db.flush()
+    recalc_invoice(inv, db)
+    post_refund(db, inv, p, method or "cash")
+    return p
+
+
+def void_line(db: Session, inv: Invoice, line: InvoiceLine) -> None:
+    """Removes a wrongly-billed line entirely (not a soft-delete — there's no
+    voided/status column on InvoiceLine) and recalculates the invoice. Doctor
+    commission tied to this line (Commission has no line_id, only
+    invoice_id) is deliberately left untouched rather than guessed at —
+    reversing it correctly would need a per-line link that doesn't exist."""
+    inv.lines.remove(line)
+    db.delete(line)
+    db.flush()
+    recalc_invoice(inv, db)
 
 
 def pay_invoice_multi(db: Session, inv: Invoice, payments: list, user_id: int, shift_id: int | None = None):

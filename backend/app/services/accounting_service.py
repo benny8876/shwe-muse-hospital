@@ -40,6 +40,26 @@ def post_payment(db: Session, inv: Invoice, payment: Payment):
     )
 
 
+def post_refund(db: Session, inv: Invoice, payment: Payment, method: str):
+    """Mirrors post_payment() with debit/credit reversed — cash goes back out,
+    revenue is reduced — since a refund is a payment undone, not a new sale."""
+    cash_codes = {
+        "cash": "1000",
+        "kpay": "1010",
+        "wave": "1011",
+        "kbzpay": "1012",
+        "card": "1020",
+        "deposit": "1100",
+    }
+    cash_code = cash_codes.get(method, "1000")
+    post_entry(
+        db,
+        ref=f"REFUND-{payment.id}",
+        description=f"Refund for {inv.number}",
+        lines=[("4000", payment.amount, 0), (cash_code, 0, payment.amount)],
+    )
+
+
 def post_expense(db: Session, category: str, amount: float, paid_from: str):
     expense_code = "5000"
     cash_code = "1000" if paid_from == "petty" else "1030"

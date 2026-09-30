@@ -13,6 +13,7 @@ type RadiologyOrderDetail = {
   age_months?: number | null
   age_days?: number | null
   gender: string
+  referring_doctor?: string
   modality: string
   findings: string
   status: string
@@ -48,6 +49,7 @@ export default function RadiologyReportView({ orderId }: { orderId: string | num
       uhid={order.uhid}
       age={formatAge(order.age_years, order.age_months, order.age_days)}
       gender={order.gender}
+      doctorName={order.referring_doctor}
       date={order.created_at}
       bodyLabel="Findings"
       bodyText={parsed.body}

@@ -11,6 +11,7 @@ import Alert from '../../components/Alert'
 import ToggleGroup from '../../components/ToggleGroup'
 import StatCard from '../../components/StatCard'
 import { formatMoney, formatDate } from '../../lib/format'
+import { announceCall } from '../../lib/voiceAnnounce'
 import { DOCTOR_SPECIALTY_PRESETS, normalizeSpecialty } from '../../lib/doctorSpecialties'
 
 export default function CashierCounterPage() {
@@ -24,6 +25,14 @@ export default function CashierCounterPage() {
   const [payMethod, setPayMethod] = useState('cash')
   const [splitAmount, setSplitAmount] = useState(0)
   const [discountInput, setDiscountInput] = useState('')
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundMethod, setRefundMethod] = useState('cash')
+  const [refundReason, setRefundReason] = useState('')
+  const [addItemQuery, setAddItemQuery] = useState('')
+  const [addItemResults, setAddItemResults] = useState<any[]>([])
+  const [addItemWarehouses, setAddItemWarehouses] = useState<any[]>([])
+  const [addItemWarehouseId, setAddItemWarehouseId] = useState('')
+  const [addItemQty, setAddItemQty] = useState('1')
   const [splits, setSplits] = useState<{ method: string; amount: number }[]>([])
   const [petty, setPetty] = useState<any>(null)
   const [expForm, setExpForm] = useState({ category: '', amount: '', notes: '' })
@@ -267,7 +276,15 @@ export default function CashierCounterPage() {
   }
 
   useEffect(() => {
-    if (tab === 'bills') void loadBills()
+    if (tab === 'bills') {
+      void loadBills()
+      if (!addItemWarehouses.length) {
+        api.get('/inventory/warehouses').then((r) => {
+          setAddItemWarehouses(r.data)
+          if (r.data[0]) setAddItemWarehouseId(String(r.data[0].id))
+        }).catch((e) => toast.error(getApiError(e)))
+      }
+    }
     if (tab === 'expenses') { void loadPetty(); void loadExpenseHistory() }
     if (tab === 'history') {
       void loadHistory()
@@ -339,6 +356,104 @@ export default function CashierCounterPage() {
       setSplitAmount(Number(data.balance))
       setDiscountInput('')
       toast.success('Discount applied')
+      await loadBills()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Refund pays money back to the patient for a payment already collected
+  // (wrong amount entered, cancelled service already paid for) — it's a
+  // correction, not a new negative charge, so it shows up as its own
+  // "REFUND" line in the payment history rather than editing the original.
+  // Generalized over (invoice, onUpdated) so both the Open Bills panel and
+  // the read-only History detail panel can reuse it — a paid-off bill drops
+  // out of Open Bills into History, and refunding is exactly what you'd do
+  // to a bill that's already fully paid.
+  async function submitRefund(inv: any, onUpdated: (data: any) => void) {
+    if (!inv) return
+    const amt = Number(refundAmount)
+    if (!amt || amt <= 0) return toast.error('Enter a valid refund amount')
+    if (amt > Number(inv.paid) + 0.01) return toast.error(`Refund cannot exceed amount paid (${formatMoney(inv.paid)})`)
+    setBusy(true)
+    try {
+      const { data } = await api.post(`/invoices/${inv.id}/refund`, { amount: amt, method: refundMethod, reason: refundReason })
+      onUpdated(data.invoice)
+      setRefundAmount('')
+      setRefundReason('')
+      toast.success('Refund recorded')
+      await loadBills()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Void removes a wrongly-billed line entirely — for a line the patient
+  // already paid for, void it and then record a separate Refund for the
+  // money, rather than expecting one action to do both.
+  async function voidLine(inv: any, lineId: number, onUpdated: (data: any) => void) {
+    if (!inv) return
+    if (!window.confirm('Void this line? This cannot be undone.')) return
+    setBusy(true)
+    try {
+      const { data } = await api.delete(`/invoices/${inv.id}/lines/${lineId}`)
+      onUpdated(data)
+      toast.success('Line voided')
+      await loadBills()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function searchAddItem() {
+    if (!addItemQuery.trim()) return
+    try {
+      const { data } = await api.get('/catalog', { params: { q: addItemQuery } })
+      setAddItemResults(data)
+      if (!data.length) toast.error('No matching item')
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }
+
+  // Stock-tracked (drug) items go through the same dispense path Pharmacy's
+  // own Sale tab uses (needs a warehouse so stock actually decrements);
+  // everything else is a plain invoice line — see the backend guard on
+  // POST /invoices/{id}/lines that rejects is_stock items outright.
+  async function addCatalogItem(inv: any, item: any, onUpdated: (data: any) => void) {
+    if (!inv) return
+    const qty = Number(addItemQty) || 1
+    if (item.is_stock && !addItemWarehouseId) return toast.error('Select a warehouse first')
+    setBusy(true)
+    try {
+      if (item.is_stock) {
+        const { data } = await api.post(`/invoices/${inv.id}/lines/pharmacy`, {
+          item_id: item.id,
+          warehouse_id: Number(addItemWarehouseId),
+          qty,
+        })
+        onUpdated(data)
+      } else {
+        await api.post(`/invoices/${inv.id}/lines`, {
+          item_id: item.id,
+          qty,
+          unit_price: item.price,
+          source: item.category || 'other',
+          description: item.name,
+        })
+        const { data } = await api.get(`/invoices/${inv.id}`)
+        onUpdated(data)
+      }
+      toast.success(`${item.name} added`)
+      setAddItemQuery('')
+      setAddItemResults([])
+      setAddItemQty('1')
       await loadBills()
     } catch (e) {
       toast.error(getApiError(e))
@@ -454,7 +569,7 @@ export default function CashierCounterPage() {
       ]} active={tab} onChange={setTab} />
 
       {tab === 'bills' && (
-        <div className="grid lg:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div className="card">
             <h3 className="font-semibold mb-3">Waiting for Payment</h3>
             <input
@@ -467,6 +582,7 @@ export default function CashierCounterPage() {
               rows={filteredBills}
               onRowClick={(r) => void openInvoice(r)}
               isRowSelected={(r) => selected?.id === r.id}
+              wrapperClassName="max-h-80"
               columns={[
               { key: 'uhid', label: 'ID', render: (r) => uhid(Number(r.patient_id)) || '—' },
               { key: 'kind', label: 'Type', render: (r) => <StatusBadge value={String(r.kind || 'opd').toUpperCase()} /> },
@@ -482,6 +598,14 @@ export default function CashierCounterPage() {
               } },
               { key: 'act', label: '', render: (r) => (
                 <div className="flex gap-1">
+                  <button
+                    type="button"
+                    title="Call patient over the counter speaker"
+                    className="btn btn-secondary btn-sm"
+                    onClick={(e) => { e.stopPropagation(); announceCall(name(Number(r.patient_id)), 'the Cashier counter to settle payment') }}
+                  >
+                    🔊
+                  </button>
                   <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); void openInvoice(r) }}>View</button>
                   <button type="button" className="btn btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); void openInvoice(r) }}>Pay</button>
                 </div>
@@ -494,15 +618,16 @@ export default function CashierCounterPage() {
               <>
                 <h3 className="font-semibold">{selected.number}</h3>
                 <div className="max-h-80 overflow-auto border rounded-lg no-print">
-                  <div className="grid grid-cols-[1fr_3rem_8rem_6.5rem] gap-3 items-center text-xs font-medium text-slate-500 bg-slate-50 px-3 py-2 sticky top-0">
+                  <div className="grid grid-cols-[1fr_3rem_8rem_6.5rem_1.75rem] gap-3 items-center text-xs font-medium text-slate-500 bg-slate-50 px-3 py-2 sticky top-0">
                     <span>Item</span>
                     <span className="text-center">Qty</span>
                     <span className="text-right">Unit price</span>
                     <span className="text-right">Amount</span>
+                    <span />
                   </div>
                   <div className="divide-y">
                     {(selected.lines || []).map((l: any) => (
-                      <div key={l.id} className="grid grid-cols-[1fr_3rem_8rem_6.5rem] gap-3 items-center text-sm px-3 py-2.5">
+                      <div key={l.id} className="grid grid-cols-[1fr_3rem_8rem_6.5rem_1.75rem] gap-3 items-center text-sm px-3 py-2.5">
                         <span className="truncate" title={l.description}>
                           {l.description}
                           {l.source === 'opd' && <span className="ml-1 text-xs text-[var(--brand-600)] whitespace-nowrap">(Doctor fee)</span>}
@@ -518,10 +643,68 @@ export default function CashierCounterPage() {
                           }}
                         />
                         <span className="text-right font-medium">{formatMoney(l.amount)}</span>
+                        <button
+                          type="button"
+                          title="Void this line"
+                          disabled={busy}
+                          className="text-slate-400 hover:text-red-600 cursor-pointer text-lg leading-none justify-self-center"
+                          onClick={() => void voidLine(selected, l.id, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}
+                        >
+                          ×
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
+
+                <div className="border-t pt-3 space-y-2 no-print">
+                  <div className="font-medium">Add Item</div>
+                  <div className="flex gap-2">
+                    <input
+                      className="input flex-1"
+                      placeholder="Search medicine / test / service name..."
+                      value={addItemQuery}
+                      onChange={(e) => setAddItemQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && searchAddItem()}
+                    />
+                    <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={searchAddItem}>Search</button>
+                  </div>
+                  {addItemResults.length > 0 && (
+                    <div className="border rounded-lg divide-y max-h-48 overflow-auto">
+                      {addItemResults.map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                          <span className="truncate">
+                            {item.name} <span className="text-slate-400">· {formatMoney(item.price)}{item.is_stock ? ' · stock' : ''}</span>
+                          </span>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="btn btn-primary btn-sm shrink-0"
+                            onClick={() => void addCatalogItem(selected, item, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}
+                          >
+                            + Add
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <select className="input" value={addItemWarehouseId} onChange={(e) => setAddItemWarehouseId(e.target.value)}>
+                      {addItemWarehouses.map((w: any) => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="input w-24"
+                      type="number"
+                      placeholder="Qty"
+                      value={addItemQty}
+                      onChange={(e) => setAddItemQty(e.target.value)}
+                    />
+                  </div>
+                  <div className="text-xs text-slate-400">Warehouse only matters for medicine (stock) items — it's ignored for services/tests.</div>
+                </div>
+
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div className="rounded-lg bg-slate-50 p-2">Total<br /><strong>{formatMoney(selected.total)}</strong></div>
                   <div className="rounded-lg bg-slate-50 p-2">Paid<br /><strong>{formatMoney(selected.paid)}</strong></div>
@@ -532,9 +715,9 @@ export default function CashierCounterPage() {
                   <div className="text-sm border rounded-lg p-2 space-y-1">
                     <div className="font-medium text-slate-600">Previous payments</div>
                     {(selected.payments || []).map((p: any) => (
-                      <div key={p.id} className="flex justify-between">
-                        <span className="uppercase">{p.method}</span>
-                        <span>{formatMoney(p.amount)}</span>
+                      <div key={p.id} className={`flex justify-between ${p.method === 'refund' ? 'text-red-600' : ''}`}>
+                        <span className="uppercase">{p.method === 'refund' ? 'REFUND' : p.method}</span>
+                        <span>{p.method === 'refund' ? '−' : ''}{formatMoney(p.amount)}</span>
                       </div>
                     ))}
                   </div>
@@ -588,6 +771,33 @@ export default function CashierCounterPage() {
                     <div className="text-sm text-slate-600">Current discount: <strong>{formatMoney(selected.discount)}</strong></div>
                   )}
                 </div>
+
+                {Number(selected.paid) > 0.01 && (
+                  <div className="border-t pt-3 space-y-2">
+                    <div className="font-medium">Refund</div>
+                    <ToggleGroup
+                      options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
+                      value={refundMethod}
+                      onChange={setRefundMethod}
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        className="input flex-1"
+                        type="number"
+                        placeholder={`Refund amount (max ${formatMoney(selected.paid)})`}
+                        value={refundAmount}
+                        onChange={(e) => setRefundAmount(e.target.value)}
+                      />
+                      <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={() => void submitRefund(selected, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}>Refund</button>
+                    </div>
+                    <input
+                      className="input"
+                      placeholder="Reason (optional)"
+                      value={refundReason}
+                      onChange={(e) => setRefundReason(e.target.value)}
+                    />
+                  </div>
+                )}
 
                 <div className="border-t pt-3 space-y-2">
                   <div className="font-medium">Multi-Payment</div>
@@ -1189,14 +1399,23 @@ export default function CashierCounterPage() {
                   <>
                     <h3 className="font-semibold">{historyDetail.number}</h3>
                     <div className="text-sm text-slate-600">{formatDate(historyDetail.created_at)} · <StatusBadge value={historyDetail.status} /></div>
-                    <div className="max-h-56 overflow-auto border rounded-lg text-sm">
+                    <div className="max-h-56 overflow-auto border rounded-lg text-sm no-print">
                       <div className="font-medium text-slate-500 bg-slate-50 px-3 py-2 sticky top-0">Bill items</div>
                       <div className="divide-y">
                         {(historyDetail.lines || []).map((l: any) => (
-                          <div key={l.id} className="grid grid-cols-[1fr_3rem_6.5rem] gap-3 items-center px-3 py-2">
+                          <div key={l.id} className="grid grid-cols-[1fr_3rem_6.5rem_1.75rem] gap-3 items-center px-3 py-2">
                             <span className="truncate" title={l.description}>{l.description}</span>
                             <span className="text-center text-slate-600">{Number(l.qty || 1)}</span>
                             <span className="text-right font-medium">{formatMoney(l.amount)}</span>
+                            <button
+                              type="button"
+                              title="Void this line"
+                              disabled={busy}
+                              className="text-slate-400 hover:text-red-600 cursor-pointer text-lg leading-none justify-self-center"
+                              onClick={() => void voidLine(historyDetail, l.id, setHistoryDetail)}
+                            >
+                              ×
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1205,9 +1424,9 @@ export default function CashierCounterPage() {
                       <div className="font-medium text-slate-500">Payments</div>
                       {(historyDetail.payments || []).length === 0 && <div className="text-slate-400">No payments yet</div>}
                       {(historyDetail.payments || []).map((p: any) => (
-                        <div key={p.id} className="flex justify-between border-b py-1">
-                          <span className="uppercase">{p.method}</span>
-                          <span>{formatMoney(p.amount)}</span>
+                        <div key={p.id} className={`flex justify-between border-b py-1 ${p.method === 'refund' ? 'text-red-600' : ''}`}>
+                          <span className="uppercase">{p.method === 'refund' ? 'REFUND' : p.method}</span>
+                          <span>{p.method === 'refund' ? '−' : ''}{formatMoney(p.amount)}</span>
                         </div>
                       ))}
                     </div>
@@ -1215,7 +1434,33 @@ export default function CashierCounterPage() {
                       <span>Total</span>
                       <span>{formatMoney(historyDetail.total)}</span>
                     </div>
-                    <button type="button" className="btn btn-secondary w-full" onClick={() => window.print()}>Print Receipt</button>
+                    {Number(historyDetail.paid) > 0.01 && (
+                      <div className="border-t pt-3 space-y-2 no-print">
+                        <div className="font-medium">Refund</div>
+                        <ToggleGroup
+                          options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
+                          value={refundMethod}
+                          onChange={setRefundMethod}
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            className="input flex-1"
+                            type="number"
+                            placeholder={`Refund amount (max ${formatMoney(historyDetail.paid)})`}
+                            value={refundAmount}
+                            onChange={(e) => setRefundAmount(e.target.value)}
+                          />
+                          <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={() => void submitRefund(historyDetail, setHistoryDetail)}>Refund</button>
+                        </div>
+                        <input
+                          className="input"
+                          placeholder="Reason (optional)"
+                          value={refundReason}
+                          onChange={(e) => setRefundReason(e.target.value)}
+                        />
+                      </div>
+                    )}
+                    <button type="button" className="btn btn-secondary w-full no-print" onClick={() => window.print()}>Print Receipt</button>
                   </>
                 )}
               </div>
