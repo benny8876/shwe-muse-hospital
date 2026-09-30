@@ -10,11 +10,11 @@ class LabOrder(Base):
     __tablename__ = "lab_orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     doctor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="ordered")
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="ordered", index=True)
     # ordered collected in_lab result billed
     sample_id: Mapped[str] = mapped_column(String(30), default="")
     tests: Mapped[str] = mapped_column(Text, default="")
@@ -28,12 +28,12 @@ class RadiologyOrder(Base):
     __tablename__ = "radiology_orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     doctor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True, index=True)
     modality: Mapped[str] = mapped_column(String(30), default="xray")  # xray ct ultrasound
-    status: Mapped[str] = mapped_column(String(20), default="ordered")
+    status: Mapped[str] = mapped_column(String(20), default="ordered", index=True)
     findings: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -44,13 +44,13 @@ class OTSchedule(Base):
     __tablename__ = "ot_schedules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     surgeon_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True, index=True)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime)
     procedure: Mapped[str] = mapped_column(String(200), default="")
-    status: Mapped[str] = mapped_column(String(20), default="scheduled")
+    status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
     anesthesia_fee: Mapped[float] = mapped_column(Float, default=0)
     surgeon_fee: Mapped[float] = mapped_column(Float, default=0)
     team_fee: Mapped[float] = mapped_column(Float, default=0)
@@ -63,11 +63,11 @@ class ServiceOrder(Base):
     __tablename__ = "service_orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     service_type: Mapped[str] = mapped_column(String(30))  # dialysis physio rehab ambulance emergency
-    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="open")
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

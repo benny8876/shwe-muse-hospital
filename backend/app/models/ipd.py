@@ -20,7 +20,7 @@ class Bed(Base):
     __tablename__ = "beds"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ward_id: Mapped[int] = mapped_column(ForeignKey("wards.id"))
+    ward_id: Mapped[int] = mapped_column(ForeignKey("wards.id"), index=True)
     code: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="available")  # available occupied maintenance
     daily_rate: Mapped[float] = mapped_column(Float, default=0)
@@ -34,11 +34,11 @@ class Admission(Base):
     __tablename__ = "admissions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
-    bed_id: Mapped[int | None] = mapped_column(ForeignKey("beds.id"), nullable=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    bed_id: Mapped[int | None] = mapped_column(ForeignKey("beds.id"), nullable=True, index=True)
     doctor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="admitted")  # admitted transferred discharged
+    status: Mapped[str] = mapped_column(String(20), default="admitted", index=True)  # admitted transferred discharged
     admitted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     discharged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deposit: Mapped[float] = mapped_column(Float, default=0)
@@ -56,7 +56,7 @@ class NursingNote(Base):
     __tablename__ = "nursing_notes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    admission_id: Mapped[int] = mapped_column(ForeignKey("admissions.id"))
+    admission_id: Mapped[int] = mapped_column(ForeignKey("admissions.id"), index=True)
     nurse_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -68,7 +68,7 @@ class VitalSign(Base):
     __tablename__ = "vital_signs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    admission_id: Mapped[int] = mapped_column(ForeignKey("admissions.id"))
+    admission_id: Mapped[int] = mapped_column(ForeignKey("admissions.id"), index=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     bp: Mapped[str] = mapped_column(String(20), default="")
     pulse: Mapped[str] = mapped_column(String(20), default="")
@@ -83,9 +83,9 @@ class WardMedOrder(Base):
     __tablename__ = "ward_med_orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
-    admission_id: Mapped[int | None] = mapped_column(ForeignKey("admissions.id"), nullable=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    admission_id: Mapped[int | None] = mapped_column(ForeignKey("admissions.id"), nullable=True, index=True)
     invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
     ordered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
@@ -100,11 +100,11 @@ class WardMedOrderItem(Base):
     __tablename__ = "ward_med_order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("ward_med_orders.id"))
+    order_id: Mapped[int] = mapped_column(ForeignKey("ward_med_orders.id"), index=True)
     catalog_item_id: Mapped[int] = mapped_column(ForeignKey("catalog_items.id"))
     invoice_line_id: Mapped[int | None] = mapped_column(ForeignKey("invoice_lines.id"), nullable=True)
     qty: Mapped[float] = mapped_column(Float, default=1)
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending dispensed cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending dispensed cancelled
 
     order = relationship("WardMedOrder", back_populates="items")
     catalog_item = relationship("CatalogItem")

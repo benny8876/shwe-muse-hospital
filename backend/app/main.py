@@ -67,6 +67,40 @@ def _ensure_schema() -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE admissions ADD COLUMN last_room_charge_date DATE"))
             admissions_needed_backfill = True
+
+    # Indexes added to models after their tables already shipped — CREATE
+    # INDEX IF NOT EXISTS is idempotent (unlike ADD COLUMN) so this can just
+    # run unconditionally every startup rather than checking column/index
+    # existence first. Without these, hot-path lookups like "find this
+    # patient's open invoice" or "load this invoice's lines" full-table-scan
+    # invoices/invoice_lines/payments etc., which is invisible on a small
+    # demo DB but gets slower as real operational history accumulates.
+    _INDEXES = [
+        ("invoices", "patient_id"), ("invoices", "branch_id"), ("invoices", "admission_id"),
+        ("invoices", "shift_id"), ("invoices", "status"),
+        ("invoice_lines", "invoice_id"),
+        ("payments", "invoice_id"), ("payments", "shift_id"),
+        ("lab_orders", "patient_id"), ("lab_orders", "branch_id"), ("lab_orders", "invoice_id"), ("lab_orders", "status"),
+        ("radiology_orders", "patient_id"), ("radiology_orders", "branch_id"), ("radiology_orders", "invoice_id"), ("radiology_orders", "status"),
+        ("ot_schedules", "patient_id"), ("ot_schedules", "branch_id"), ("ot_schedules", "invoice_id"), ("ot_schedules", "status"),
+        ("service_orders", "patient_id"), ("service_orders", "branch_id"), ("service_orders", "invoice_id"), ("service_orders", "status"),
+        ("beds", "ward_id"),
+        ("admissions", "patient_id"), ("admissions", "branch_id"), ("admissions", "bed_id"), ("admissions", "status"),
+        ("nursing_notes", "admission_id"),
+        ("vital_signs", "admission_id"),
+        ("ward_med_orders", "patient_id"), ("ward_med_orders", "branch_id"), ("ward_med_orders", "admission_id"),
+        ("ward_med_order_items", "order_id"), ("ward_med_order_items", "status"),
+        ("appointments", "patient_id"), ("appointments", "doctor_id"), ("appointments", "branch_id"), ("appointments", "status"),
+        ("queue_tokens", "branch_id"), ("queue_tokens", "patient_id"), ("queue_tokens", "status"),
+        ("visits", "patient_id"), ("visits", "branch_id"),
+        ("expenses", "branch_id"), ("expenses", "shift_id"),
+    ]
+    table_names = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table, col in _INDEXES:
+            if table in table_names:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{col} ON {table} ({col})"))
+
     db = SessionLocal()
     try:
         db.execute(

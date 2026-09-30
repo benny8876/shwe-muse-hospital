@@ -27,13 +27,13 @@ class Invoice(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     number: Mapped[str] = mapped_column(String(30), unique=True, index=True)
-    patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"), nullable=True)
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"), nullable=True, index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     doctor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    admission_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True)
+    admission_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(20), default="opd")  # opd | ipd | pharmacy | other
-    status: Mapped[str] = mapped_column(String(20), default="open")  # draft | open | partial | paid | void
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # draft | open | partial | paid | void
     payer_type: Mapped[str] = mapped_column(String(20), default="self")  # self | corporate | insurance
     corporate_account_id: Mapped[int | None] = mapped_column(ForeignKey("corporate_accounts.id"), nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="MMK")
@@ -56,7 +56,7 @@ class InvoiceLine(Base):
     __tablename__ = "invoice_lines"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"))
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"), index=True)
     item_id: Mapped[int | None] = mapped_column(ForeignKey("catalog_items.id"), nullable=True)
     batch_id: Mapped[int | None] = mapped_column(ForeignKey("stock_batches.id"), nullable=True)
     source: Mapped[str] = mapped_column(String(30), default="opd")
@@ -77,8 +77,8 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"))
-    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"), index=True)
+    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True, index=True)
     method: Mapped[str] = mapped_column(String(20))  # cash kpay wave kbzpay card deposit refund
     amount: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String(8), default="MMK")

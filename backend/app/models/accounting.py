@@ -45,8 +45,8 @@ class Expense(Base):
     __tablename__ = "expenses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
-    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    shift_id: Mapped[int | None] = mapped_column(ForeignKey("cashier_shifts.id"), nullable=True, index=True)
     category: Mapped[str] = mapped_column(String(60), default="")
     name: Mapped[str] = mapped_column(String(120), default="")
     amount: Mapped[float] = mapped_column(Float, default=0)

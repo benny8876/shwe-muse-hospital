@@ -10,13 +10,13 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
-    doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=15)
     source: Mapped[str] = mapped_column(String(20), default="counter")  # counter | phone | portal
-    status: Mapped[str] = mapped_column(String(20), default="booked")  # booked | arrived | done | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="booked", index=True)  # booked | arrived | done | cancelled
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -60,11 +60,11 @@ class QueueToken(Base):
     __tablename__ = "queue_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     number: Mapped[str] = mapped_column(String(20), index=True)
-    patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"), nullable=True)
+    patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"), nullable=True, index=True)
     department: Mapped[str] = mapped_column(String(40), default="OPD")
-    status: Mapped[str] = mapped_column(String(20), default="waiting")  # waiting | serving | done | skipped
+    status: Mapped[str] = mapped_column(String(20), default="waiting", index=True)  # waiting | serving | done | skipped
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     called_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -75,9 +75,9 @@ class Visit(Base):
     __tablename__ = "visits"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"))
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     doctor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20), default="opd")
     appointment_id: Mapped[int | None] = mapped_column(ForeignKey("appointments.id"), nullable=True)
     chief_complaint: Mapped[str] = mapped_column(Text, default="")
