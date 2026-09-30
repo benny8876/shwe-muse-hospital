@@ -1,3 +1,7 @@
+from datetime import date, timedelta
+
+from app.db.session import SessionLocal
+from app.models.ipd import Admission
 from tests.conftest import register_patient
 
 
@@ -251,6 +255,65 @@ def test_ipd_daily_charge_and_discharge(client, auth_headers, reception_headers,
 
     r = client.post(f"/api/v1/ipd/admissions/{admission_id}/daily-charge", headers=nurse_headers)
     assert r.status_code == 400
+
+
+def test_ipd_dashboard_auto_posts_missed_room_charges(client, reception_headers, admin_headers, doctor_id):
+    """Room charges must accrue on their own as calendar days pass, without
+    a nurse remembering to click "Post room charge" — missing that click
+    used to mean the hospital simply never billed that day. Viewing the
+    ward dashboard (or the nurse's admitted-patient list, or discharge)
+    should catch up any owed days automatically and only once per day."""
+    r = client.get("/api/v1/ipd/beds", headers=admin_headers)
+    bed = next(b for b in r.json() if b["status"] == "available")
+    bed_id, daily_rate = bed["id"], bed["daily_rate"]
+
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Auto Room Charge Patient",
+            "phone": "09-000-555",
+            "gender": "F",
+            "patient_type": "ipd",
+            "bed_id": bed_id,
+            "deposit": 0,
+            "billing_mode": "daily",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    admission_id = r.json()["admission_id"]
+
+    # Admission already posts the day-one charge; viewing the dashboard the
+    # same day must not add another.
+    r = client.get("/api/v1/ipd/dashboard", params={"branch_id": 1}, headers=admin_headers)
+    bed_row = next(b for w in r.json() for b in w["beds"] if b["id"] == bed_id)
+    total_day0 = bed_row["admission"]["total"]
+
+    # Simulate 3 calendar days having passed without anyone clicking "Post
+    # room charge".
+    db = SessionLocal()
+    try:
+        adm = db.get(Admission, admission_id)
+        adm.last_room_charge_date = date.today() - timedelta(days=3)
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.get("/api/v1/ipd/dashboard", params={"branch_id": 1}, headers=admin_headers)
+    bed_row = next(b for w in r.json() for b in w["beds"] if b["id"] == bed_id)
+    admission = bed_row["admission"]
+    assert admission["total"] == total_day0 + 3 * daily_rate
+    room_lines = [l for l in admission["lines"] if l["source"] == "ipd_room"]
+    assert len(room_lines) == 4  # day-one line + 3 caught-up days
+
+    # Calling it again the same day must be a no-op (idempotent).
+    r = client.get("/api/v1/ipd/dashboard", params={"branch_id": 1}, headers=admin_headers)
+    bed_row = next(b for w in r.json() for b in w["beds"] if b["id"] == bed_id)
+    assert bed_row["admission"]["total"] == total_day0 + 3 * daily_rate
+
+    client.post(f"/api/v1/ipd/admissions/{admission_id}/discharge", json={"summary": "done"}, headers=reception_headers)
 
 
 def test_ipd_mid_stay_deposit_via_cashier_allows_overpay(client, auth_headers, reception_headers, pharmacy_headers, admin_headers, doctor_id):

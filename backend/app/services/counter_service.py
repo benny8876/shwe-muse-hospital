@@ -253,6 +253,7 @@ def _register_ipd(
         doctor_id=doctor.id,
         deposit=deposit,
         billing_mode=billing_mode or "daily",
+        last_room_charge_date=date.today(),
     )
     db.add(adm)
     db.flush()

@@ -45,6 +45,7 @@ class Admission(Base):
     billing_mode: Mapped[str] = mapped_column(String(20), default="daily")  # daily hourly package
     diagnosis: Mapped[str] = mapped_column(Text, default="")
     discharge_summary: Mapped[str] = mapped_column(Text, default="")
+    last_room_charge_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     patient = relationship("Patient")
     bed = relationship("Bed")

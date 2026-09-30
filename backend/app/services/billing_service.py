@@ -1,9 +1,11 @@
+from datetime import date
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.billing import Invoice, InvoiceLine, Payment
 from app.models.catalog import CatalogItem
-from app.models.ipd import Admission
+from app.models.ipd import Admission, Bed
 from app.models.users import Commission, User
 from app.services.accounting_service import post_payment, post_refund
 from app.services.utils import next_number
@@ -223,6 +225,36 @@ def collect_ipd_deposit(
     audit(db, user_id, "ipd_deposit", "admission", str(admission_id), f"{m} amount={amount}")
     db.flush()
     return inv, adm
+
+
+def ensure_daily_room_charges(db: Session, adm: Admission) -> int:
+    """Catches up any room-charge days owed since `last_room_charge_date`,
+    so ward staff no longer have to remember to click "Post room charge"
+    every day. There's no background job runner in this codebase, so this
+    is called opportunistically wherever an active admission is read (IPD
+    dashboard, admissions list, discharge) rather than on a schedule.
+    Idempotent per calendar day: advances `last_room_charge_date` to today,
+    so calling it again the same day is a no-op. Only `billing_mode ==
+    "daily"` accrues this way — "package" is a single flat fee already
+    posted at admission, and "hourly" isn't billed per calendar day.
+    Returns the number of days charged."""
+    if adm.status not in ("admitted", "transferred") or not adm.bed_id or adm.billing_mode != "daily":
+        return 0
+    today = date.today()
+    last = adm.last_room_charge_date or (adm.admitted_at.date() if adm.admitted_at else today)
+    days_owed = (today - last).days
+    if days_owed <= 0:
+        return 0
+    bed = db.get(Bed, adm.bed_id)
+    inv = db.query(Invoice).filter(Invoice.admission_id == adm.id, Invoice.kind == "ipd").order_by(Invoice.id.desc()).first()
+    if not bed or not inv:
+        return 0
+    label = f"Room charge {bed.code} ({adm.billing_mode})"
+    for _ in range(days_owed):
+        add_line(db, inv, None, 1, bed.daily_rate, "ipd_room", label)
+    adm.last_room_charge_date = today
+    db.flush()
+    return days_owed
 
 
 def create_invoice(db: Session, branch_id: int, patient_id: int | None, kind: str = "opd", doctor_id: int | None = None):

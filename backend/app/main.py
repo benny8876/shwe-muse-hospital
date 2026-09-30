@@ -58,6 +58,13 @@ def _ensure_schema() -> None:
         if "duration_minutes" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE appointments ADD COLUMN duration_minutes INTEGER DEFAULT 15"))
+    admissions_needed_backfill = False
+    if "admissions" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("admissions")}
+        if "last_room_charge_date" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE admissions ADD COLUMN last_room_charge_date DATE"))
+            admissions_needed_backfill = True
     db = SessionLocal()
     try:
         db.execute(
@@ -71,6 +78,17 @@ def _ensure_schema() -> None:
                 """
             )
         )
+        if admissions_needed_backfill:
+            # Start the auto room-charge clock from today for admissions that
+            # predate this column, rather than from admitted_at — otherwise a
+            # long-open admission would suddenly get billed for every day it
+            # was already open the first time this ran.
+            from datetime import date
+
+            from app.models.ipd import Admission
+
+            for adm in db.query(Admission).filter(Admission.status.in_(["admitted", "transferred"])).all():
+                adm.last_room_charge_date = date.today()
         db.commit()
     finally:
         db.close()

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from app.models.patients import Patient
 from app.models.users import User
 from app.schemas.actions import AdmitIn, DischargeIn, IpdDepositIn, NoteIn, TransferIn, VitalsIn
 from app.schemas.common import InvoiceOut
-from app.services.billing_service import add_line, collect_ipd_deposit, create_invoice, recalc_invoice
+from app.services.billing_service import add_line, collect_ipd_deposit, create_invoice, ensure_daily_room_charges, recalc_invoice
 from app.services.utils import audit
 
 router = APIRouter(prefix="/ipd", tags=["ipd"])
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/ipd", tags=["ipd"])
 def ipd_dashboard(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require("ipd", "ipd.read", "nursing", "patients.read"))):
     wards = db.query(Ward).filter(Ward.branch_id == branch_id).order_by(Ward.name).all()
     out = []
+    charged_any = False
     for ward in wards:
         beds = db.query(Bed).filter(Bed.ward_id == ward.id).order_by(Bed.code).all()
         bed_rows = []
@@ -36,6 +37,8 @@ def ipd_dashboard(branch_id: int, db: Session = Depends(get_db), _: User = Depen
                     .first()
                 )
                 if adm:
+                    if ensure_daily_room_charges(db, adm):
+                        charged_any = True
                     patient = db.get(Patient, adm.patient_id)
                     inv = db.query(Invoice).filter(Invoice.admission_id == adm.id).order_by(Invoice.id.desc()).first()
                     lines_out = []
@@ -107,6 +110,8 @@ def ipd_dashboard(branch_id: int, db: Session = Depends(get_db), _: User = Depen
                 "beds": bed_rows,
             }
         )
+    if charged_any:
+        db.commit()
     return out
 
 
@@ -136,6 +141,7 @@ def admit(data: AdmitIn, db: Session = Depends(get_db), _: User = Depends(requir
         doctor_id=data.doctor_id,
         deposit=data.deposit,
         billing_mode=data.billing_mode,
+        last_room_charge_date=date.today(),
     )
     db.add(adm)
     inv = create_invoice(db, data.branch_id, data.patient_id, kind="ipd", doctor_id=data.doctor_id)
@@ -217,6 +223,8 @@ def daily_charge(
     rate = bed.daily_rate if adm.billing_mode == "daily" else bed.hourly_rate if adm.billing_mode == "hourly" else bed.package_rate
     label = f"Room charge {bed.code} ({adm.billing_mode})"
     add_line(db, inv, None, 1, rate, "ipd_room", label)
+    if adm.billing_mode == "daily":
+        adm.last_room_charge_date = date.today()
     audit(db, user.id, "ipd_daily_charge", "admission", str(admission_id), f"{label} rate={rate}")
     db.commit()
     db.refresh(inv)
@@ -235,6 +243,7 @@ def discharge(
         raise HTTPException(404)
     if adm.status == "discharged":
         raise HTTPException(400, "Already discharged")
+    ensure_daily_room_charges(db, adm)
     adm.status = "discharged"
     adm.discharged_at = datetime.utcnow()
     adm.discharge_summary = data.summary or ""
@@ -270,7 +279,10 @@ def admissions(branch_id: int | None = None, status: str = "admitted", db: Sessi
         q = q.filter(Admission.status == status)
     if branch_id:
         q = q.filter(Admission.branch_id == branch_id)
-    return q.all()
+    rows = q.all()
+    if status == "admitted" and any(ensure_daily_room_charges(db, adm) for adm in rows):
+        db.commit()
+    return rows
 
 
 @router.post("/admissions/{admission_id}/vitals")
