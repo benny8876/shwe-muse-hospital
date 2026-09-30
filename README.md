@@ -62,6 +62,28 @@ docker compose up --build
 
 ## Backup
 
+**Local SQLite deployment** (plain `uvicorn`, no Docker — the default dev setup):
+
+```bash
+python3 scripts/backup_sqlite.py
+```
+
+Copies `backend/shwemuse.db` to a timestamped snapshot in `backend/backups/`
+using SQLite's own backup API (safe to run while the app is live). Backups
+older than 14 days are deleted automatically; override with `KEEP_DAYS=30`
+etc. To run it automatically, add a cron entry on the server, e.g. nightly
+at 2am:
+
+```
+0 2 * * * cd /path/to/shwe-muse-hospital && python3 scripts/backup_sqlite.py >> backend/backups/backup.log 2>&1
+```
+
+Since backups live on the same disk as the app, also copy `backend/backups/`
+to another machine/drive periodically (rsync, scp, an external drive) — a
+backup that dies with the server it's on doesn't protect against server loss.
+
+**Docker Compose deployment** (Postgres):
+
 ```bash
 ./scripts/backup.sh
 ```
