@@ -126,4 +126,12 @@ body {
   @page { size: A4; margin: 12mm; }
   .no-print { display: none !important; }
   .print-only { display: block !important; }
+  /* .print-only's `display: block !important` above beats a Tailwind
+     `flex` class regardless of source order (both are !important-free vs
+     !important, or equal-specificity single-class selectors) — so a
+     print-only container that needs flex layout (e.g. LabTemplateResult's
+     footer pinned to the page bottom via `flex flex-col` + `mt-auto`)
+     silently loses it at print time unless it also carries this class,
+     declared after .print-only so it wins the tie on `display`. */
+  .print-flex { display: flex !important; }
 }

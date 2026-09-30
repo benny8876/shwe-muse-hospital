@@ -502,7 +502,7 @@ export default function LabTemplateResult({ template, values, onChange, patientN
       {/* A4 print layout — always rendered when readOnly (visible on screen too), otherwise print-only.
           flex-col + min-h-[297mm] so the confidentiality note (mt-auto) is pinned to the bottom of
           the page rather than sitting right under the signature. */}
-      <div className={`${readOnly ? '' : 'print-only hidden'} p-8 flex flex-col min-h-[297mm]`}>
+      <div className={`${readOnly ? '' : 'print-only print-flex hidden'} p-8 flex flex-col min-h-[297mm]`}>
         <img src={letterhead} alt="Shwe Muse Hospital" className="w-full mb-4" />
         <div className="grid grid-cols-2 gap-1 text-sm border-t border-b py-2 mb-3">
           <div>{template.patientLabel || "Patient's Name"}: <strong>{patientName}</strong></div>
