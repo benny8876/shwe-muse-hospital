@@ -67,6 +67,13 @@ export default function CashierCounterPage() {
   const [busy, setBusy] = useState(false)
   const [depositAmount, setDepositAmount] = useState<number | ''>('')
 
+  const [shift, setShift] = useState<any>(null)
+  const [shiftBusy, setShiftBusy] = useState(false)
+  const [openingFloat, setOpeningFloat] = useState('')
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false)
+  const [closingCash, setClosingCash] = useState('')
+  const [zReport, setZReport] = useState<any>(null)
+
   const PAY_METHODS = ['cash', 'kpay', 'wave'] as const
   const payMethodLabel = (m: string) => (m === 'wave' ? 'WAVE PAY' : m.toUpperCase())
 
@@ -308,6 +315,10 @@ export default function CashierCounterPage() {
   useEffect(() => {
     if (tab === 'services') void loadServiceItems(serviceDept)
   }, [serviceDept])
+
+  useEffect(() => {
+    api.get('/shifts/current').then((r) => setShift(r.data)).catch(() => {})
+  }, [])
 
   async function editLinePrice(lineId: number, unitPrice: number) {
     if (!selected) return
@@ -557,6 +568,42 @@ export default function CashierCounterPage() {
     }
   }
 
+  // Shift is optional — bills and expenses work the same with or without one
+  // open. Opening one just gives a "till session" that /shifts/{id}/z-report
+  // and this branch's expenses (auto-tagged server-side while a shift is
+  // open) can be summarized against at close time.
+  async function openShift() {
+    setShiftBusy(true)
+    try {
+      const { data } = await api.post('/shifts/open', null, { params: { branch_id: branchId, opening_float: Number(openingFloat) || 0 } })
+      setShift(data)
+      setOpeningFloat('')
+      toast.success('Shift opened')
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setShiftBusy(false)
+    }
+  }
+
+  async function closeShift() {
+    if (!shift) return
+    setShiftBusy(true)
+    try {
+      await api.post(`/shifts/${shift.id}/close`, null, { params: { closing_cash: Number(closingCash) || 0 } })
+      const { data } = await api.get(`/shifts/${shift.id}/z-report`)
+      setZReport(data)
+      setShift(null)
+      setClosingCash('')
+      setCloseShiftOpen(false)
+      toast.success('Shift closed')
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setShiftBusy(false)
+    }
+  }
+
   return (
     <div>
       <Tabs tabs={[
@@ -567,6 +614,52 @@ export default function CashierCounterPage() {
         { id: 'analytics', label: 'Analyze' },
         { id: 'history', label: 'History' },
       ]} active={tab} onChange={setTab} />
+
+      <div className="card mb-4 flex flex-wrap items-center justify-between gap-3 py-2.5">
+        {shift ? (
+          <>
+            <div className="text-sm">
+              <span className="font-semibold text-slate-800">Shift #{shift.id} open</span>
+              <span className="text-slate-500"> · Opening float {formatMoney(shift.opening_float)} · since {formatDate(shift.opened_at)}</span>
+            </div>
+            <button type="button" disabled={shiftBusy} className="btn btn-secondary btn-sm" onClick={() => setCloseShiftOpen(true)}>Close Shift</button>
+          </>
+        ) : (
+          <>
+            <span className="text-sm text-slate-500">No shift open — bills &amp; expenses work either way</span>
+            <div className="flex items-center gap-2">
+              <input className="input w-36" type="number" placeholder="Opening float" value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)} />
+              <button type="button" disabled={shiftBusy} className="btn btn-secondary btn-sm" onClick={openShift}>Open Shift</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {closeShiftOpen && (
+        <Modal title="Close Shift" onClose={() => setCloseShiftOpen(false)}>
+          <p className="text-xs text-slate-500">Cash drawer ထဲက ရှိတဲ့ငွေကို ရေတွက်ပြီး ဖြည့်ပါ</p>
+          <input className="input" type="number" placeholder="Closing cash count" value={closingCash} onChange={(e) => setClosingCash(e.target.value)} />
+          <div className="flex gap-2">
+            <button type="button" disabled={shiftBusy} className="btn btn-primary flex-1" onClick={closeShift}>Close & Z-Report</button>
+            <button type="button" className="btn btn-secondary flex-1" onClick={() => setCloseShiftOpen(false)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+
+      {zReport && (
+        <Modal title={`Z-Report — Shift #${zReport.shift_id}`} onClose={() => setZReport(null)}>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span>Bills paid</span><span className="font-medium">{zReport.invoice_count}</span></div>
+            <div className="flex justify-between"><span>Collected</span><span className="font-medium">{formatMoney(zReport.collected)}</span></div>
+            {zReport.refunded > 0 && (
+              <div className="flex justify-between text-red-600"><span>Refunded</span><span className="font-medium">−{formatMoney(zReport.refunded)}</span></div>
+            )}
+            <div className="flex justify-between font-semibold border-t border-slate-200 pt-2"><span>Net collected</span><span>{formatMoney(zReport.net_collected)}</span></div>
+            <div className="flex justify-between"><span>Expenses this shift</span><span className="font-medium">{formatMoney(zReport.expense_total)}</span></div>
+          </div>
+          <button type="button" className="btn btn-secondary w-full" onClick={() => setZReport(null)}>Close</button>
+        </Modal>
+      )}
 
       {tab === 'bills' && (
         <div className="space-y-4">

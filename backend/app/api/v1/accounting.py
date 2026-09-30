@@ -52,9 +52,13 @@ def corporate_accounts(db: Session = Depends(get_db), _: User = Depends(require(
 
 
 @router.post("/expenses")
-def create_expense(data: ExpenseIn, db: Session = Depends(get_db), _: User = Depends(require("accounts", "pos"))):
+def create_expense(data: ExpenseIn, db: Session = Depends(get_db), user: User = Depends(require("accounts", "pos"))):
+    from app.models.billing import CashierShift
+
+    shift = db.query(CashierShift).filter(CashierShift.user_id == user.id, CashierShift.status == "open").first()
     exp = Expense(
         branch_id=data.branch_id,
+        shift_id=shift.id if shift else None,
         category=data.category,
         name=data.name,
         amount=data.amount,

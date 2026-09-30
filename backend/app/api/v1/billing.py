@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.deps import get_current_user, require
@@ -49,8 +52,9 @@ def close_shift(shift_id: int, closing_cash: float = 0, db: Session = Depends(ge
         raise HTTPException(404)
     s.status = "closed"
     s.closing_cash = closing_cash
-    s.closed_at = __import__("datetime").datetime.utcnow()
+    s.closed_at = datetime.utcnow()
     db.commit()
+    db.refresh(s)
     return s
 
 
@@ -61,10 +65,30 @@ def current_shift(db: Session = Depends(get_db), user: User = Depends(require("p
 
 @router.get("/shifts/{shift_id}/z-report")
 def z_report(shift_id: int, db: Session = Depends(get_db), _: User = Depends(require("shifts", "pos"))):
-    invs = db.query(Invoice).filter(Invoice.shift_id == shift_id).all()
-    total = sum(i.total for i in invs)
-    paid = sum(i.paid for i in invs)
-    return {"shift_id": shift_id, "invoice_count": len(invs), "total": total, "paid": paid}
+    # Based on Payment rows (which /invoices/{id}/pay, /pay-multi and /refund
+    # already tag with the cashier's currently-open shift_id), not Invoice —
+    # most invoices are created by Reception/IPD/Pharmacy via
+    # billing_service.create_invoice() directly, never through this file's
+    # POST /invoices, so Invoice.shift_id is essentially never set. Payments
+    # collected while the till is open are the real per-shift signal.
+    from app.models.accounting import Expense
+    from app.models.billing import Payment
+
+    payments = db.query(Payment).filter(Payment.shift_id == shift_id).all()
+    collected = sum(p.amount for p in payments if p.method != "refund")
+    refunded = sum(p.amount for p in payments if p.method == "refund")
+    invoice_count = len({p.invoice_id for p in payments})
+    expense_total = float(
+        db.query(func.coalesce(func.sum(Expense.amount), 0.0)).filter(Expense.shift_id == shift_id).scalar() or 0
+    )
+    return {
+        "shift_id": shift_id,
+        "invoice_count": invoice_count,
+        "collected": collected,
+        "refunded": refunded,
+        "net_collected": collected - refunded,
+        "expense_total": expense_total,
+    }
 
 
 @router.post("/invoices", response_model=InvoiceOut)

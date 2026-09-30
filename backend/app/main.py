@@ -53,6 +53,8 @@ def _ensure_schema() -> None:
                 conn.execute(text("ALTER TABLE expenses ADD COLUMN name VARCHAR(120) DEFAULT ''"))
             if "paid_by" not in cols:
                 conn.execute(text("ALTER TABLE expenses ADD COLUMN paid_by VARCHAR(80) DEFAULT ''"))
+            if "shift_id" not in cols:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN shift_id INTEGER"))
     if "appointments" in insp.get_table_names():
         cols = {c["name"] for c in insp.get_columns("appointments")}
         if "duration_minutes" not in cols:
