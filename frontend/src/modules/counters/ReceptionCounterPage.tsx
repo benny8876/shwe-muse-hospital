@@ -66,9 +66,6 @@ export default function ReceptionCounterPage() {
   const [convertBusy, setConvertBusy] = useState(false)
 
   const [ipdActive, setIpdActive] = useState<any[]>([])
-  const [dischargePick, setDischargePick] = useState<any | null>(null)
-  const [dischargeSummary, setDischargeSummary] = useState('')
-  const [dischargeBusy, setDischargeBusy] = useState(false)
 
   const [appointments, setAppointments] = useState<any[]>([])
   const [apDoctorFilter, setApDoctorFilter] = useState('')
@@ -182,7 +179,7 @@ export default function ReceptionCounterPage() {
         .then((r) => setHistoryRows(r.data))
         .catch((e) => toast.error(getApiError(e)))
     }
-    if (tab === 'discharge' || tab === 'ipd-deposit') {
+    if (tab === 'ipd-deposit') {
       api.get('/counter/active-patients', { params: { branch_id: branchId } })
         .then((r) => setIpdActive(r.data.filter((p: any) => (p.invoice_kind || '').toLowerCase() === 'ipd' && p.admission_id)))
         .catch((e) => toast.error(getApiError(e)))
@@ -345,28 +342,6 @@ export default function ReceptionCounterPage() {
     }
   }
 
-  async function dischargeIpd() {
-    if (!dischargePick?.admission_id) return toast.error('IPD လူနာ ရွေးပါ')
-    setDischargeBusy(true)
-    try {
-      const { data } = await api.post(`/ipd/admissions/${dischargePick.admission_id}/discharge`, { summary: dischargeSummary })
-      const inv = data.invoice
-      toast.success(
-        inv
-          ? `Discharged — ${dischargePick.name}: bill ${inv.status}, balance ${formatMoney(inv.balance)} → Cashier`
-          : `Discharged — ${dischargePick.name}`,
-      )
-      setDischargePick(null)
-      setDischargeSummary('')
-      const { data: rows } = await api.get('/counter/active-patients', { params: { branch_id: branchId } })
-      setIpdActive(rows.filter((p: any) => (p.invoice_kind || '').toLowerCase() === 'ipd' && p.admission_id))
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setDischargeBusy(false)
-    }
-  }
-
   const historyTerms = historyQuery.trim().toLowerCase().split(/[,\s]+/).filter(Boolean)
   const filteredHistory = historyRows.filter((r) => {
     if (historyTerms.length === 0) return true
@@ -446,7 +421,6 @@ export default function ReceptionCounterPage() {
         { id: 'register', label: 'Register' },
         { id: 'appointments', label: 'Appointments' },
         { id: 'queue', label: 'Queue' },
-        { id: 'discharge', label: 'IPD Discharge' },
         { id: 'ipd-deposit', label: 'IPD Deposit' },
         { id: 'convert', label: 'Convert OPD ⇄ IPD' },
         { id: 'history', label: 'Bill History' },
@@ -739,45 +713,6 @@ export default function ReceptionCounterPage() {
         </div>
       )}
 
-      {tab === 'discharge' && (
-        <div className="max-w-lg card space-y-4">
-          <Alert tone="info">
-            ဆေးရုံဆင်းပြီး bed လွှတ်မယ် — IPD bill က Cashier မှာ ရှင်းပါ။ OPD follow-up အတွက် <strong>Convert</strong> tab သုံးပါ (ဒီ tab မဟုတ်)။
-          </Alert>
-          <h3 className="font-semibold text-slate-800">Admitted IPD patients (open bill)</h3>
-          <div className="flex flex-wrap gap-2">
-            {ipdActive.length === 0 && <p className="text-sm text-slate-500">No admitted IPD patients with open bills</p>}
-            {ipdActive.map((p) => (
-              <button
-                key={p.invoice_id}
-                type="button"
-                onClick={() => setDischargePick(p)}
-                className={`rounded-full border px-3 py-1.5 text-sm ${dischargePick?.invoice_id === p.invoice_id ? 'border-[var(--brand-600)] bg-[var(--brand-50)]' : 'border-slate-300 hover:border-[var(--brand-600)]'}`}
-              >
-                {p.name} · {p.uhid} · {formatMoney(p.balance)} due
-              </button>
-            ))}
-          </div>
-          {dischargePick && (
-            <>
-              <div className="text-sm text-slate-600">
-                Bill <strong>{dischargePick.invoice_number}</strong>
-                <StatusBadge value={String(dischargePick.invoice_status || 'open').toUpperCase()} />
-              </div>
-              <textarea
-                className="input min-h-24"
-                placeholder="Discharge summary (optional)"
-                value={dischargeSummary}
-                onChange={(e) => setDischargeSummary(e.target.value)}
-              />
-              <button type="button" disabled={dischargeBusy} className="btn btn-primary w-full" onClick={dischargeIpd}>
-                Discharge & release bed
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
       {tab === 'ipd-deposit' && (
         <div className="max-w-lg card space-y-4">
           <Alert tone="info">
@@ -831,7 +766,7 @@ export default function ReceptionCounterPage() {
         <div className="max-w-lg card space-y-4">
           <p className="text-sm text-slate-600">
             Visit type ပြောင်းခြင်း — OPD ကတွေ့ပြီး ဆေးရုံတက်ရင် <strong>→ IPD</strong>။
-            ဆေးရုံမဆင်းသေးပဲ OPD bill အသစ် လိုရင် <strong>→ OPD (new visit)</strong> — IPD discharge မဟုတ်ပါ (အဲဒါက IPD Discharge tab)။
+            ဆေးရုံမဆင်းသေးပဲ OPD bill အသစ် လိုရင် <strong>→ OPD (new visit)</strong> — IPD discharge မဟုတ်ပါ (ဆေးရုံဆင်း/bed လွှတ်ဖို့ Nurse/IPD counter သုံးပါ)။
           </p>
           <PatientSelect className="input" value={convertPatientId} onChange={setConvertPatientId} />
           <ToggleGroup
