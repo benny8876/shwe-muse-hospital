@@ -121,6 +121,7 @@ export default function OwnerPanelPage() {
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [showAllExpenseCategories, setShowAllExpenseCategories] = useState(false)
+  const [showAllRecentExpenses, setShowAllRecentExpenses] = useState(false)
   const [assets, setAssets] = useState<any[]>([])
   const [assetForm, setAssetForm] = useState(emptyAssetForm)
   const [assetModalOpen, setAssetModalOpen] = useState(false)
@@ -492,42 +493,60 @@ export default function OwnerPanelPage() {
               <div className="card rounded-2xl shadow-sm border-0">
                 <h3 className="font-semibold mb-3">Recent Expenses</h3>
 
-                <div className="sm:hidden space-y-2">
-                  {(analytics.expense_details || []).length === 0 ? (
-                    <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
-                  ) : (
-                    (analytics.expense_details || []).map((r: any) => (
-                      <div key={r.id} className="rounded-xl shadow-sm p-3 flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-fg)' }}>
-                          <IconReceipt color="#fff" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{r.category}</div>
-                          <div className="text-xs text-slate-500 truncate">
-                            {formatDate(String(r.created_at))}
-                            {r.name ? ` · ${r.name}` : ''}
-                            {r.paid_by ? ` · ${r.paid_by}` : ''}
-                          </div>
-                        </div>
-                        <div className="font-semibold text-red-600 shrink-0">{formatMoney(Number(r.amount))}</div>
+                {(() => {
+                  const allRows = analytics.expense_details || []
+                  const visibleRows = showAllRecentExpenses ? allRows : allRows.slice(0, 5)
+                  return (
+                    <>
+                      <div className="sm:hidden space-y-2">
+                        {allRows.length === 0 ? (
+                          <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
+                        ) : (
+                          visibleRows.map((r: any) => (
+                            <div key={r.id} className="rounded-xl shadow-sm p-3 flex items-center gap-3">
+                              <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-fg)' }}>
+                                <IconReceipt color="#fff" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium truncate">{r.category}</div>
+                                <div className="text-xs text-slate-500 truncate">
+                                  {formatDate(String(r.created_at))}
+                                  {r.name ? ` · ${r.name}` : ''}
+                                  {r.paid_by ? ` · ${r.paid_by}` : ''}
+                                </div>
+                              </div>
+                              <div className="font-semibold text-red-600 shrink-0">{formatMoney(Number(r.amount))}</div>
+                            </div>
+                          ))
+                        )}
                       </div>
-                    ))
-                  )}
-                </div>
-                <div className="hidden sm:block">
-                  <DataTable
-                    wrapperClassName="rounded-2xl"
-                    rows={analytics.expense_details || []}
-                    columns={[
-                      { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.created_at)) },
-                      { key: 'category', label: 'Category', render: (r: any) => String(r.category) },
-                      { key: 'name', label: 'Name', render: (r: any) => r.name || '—' },
-                      { key: 'paid_by', label: 'Paid By', render: (r: any) => r.paid_by || '—' },
-                      { key: 'amount', label: 'Amount', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(Number(r.amount))}</span> },
-                    ]}
-                    emptyText="No expenses in this period"
-                  />
-                </div>
+                      <div className="hidden sm:block">
+                        <DataTable
+                          wrapperClassName="rounded-2xl"
+                          rows={visibleRows}
+                          columns={[
+                            { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.created_at)) },
+                            { key: 'category', label: 'Category', render: (r: any) => String(r.category) },
+                            { key: 'name', label: 'Name', render: (r: any) => r.name || '—' },
+                            { key: 'paid_by', label: 'Paid By', render: (r: any) => r.paid_by || '—' },
+                            { key: 'amount', label: 'Amount', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(Number(r.amount))}</span> },
+                          ]}
+                          emptyText="No expenses in this period"
+                        />
+                      </div>
+                      {allRows.length > 5 && (
+                        <button
+                          type="button"
+                          className="text-sm font-medium mt-3 hover:underline"
+                          style={{ color: 'var(--brand-600)' }}
+                          onClick={() => setShowAllRecentExpenses((v) => !v)}
+                        >
+                          {showAllRecentExpenses ? 'Show less' : `+${allRows.length - 5} more`}
+                        </button>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             </>
           )}
