@@ -1148,6 +1148,49 @@ def bill_history_export(
     )
 
 
+@router.get("/bill-history/export/pdf")
+def bill_history_export_pdf(
+    branch_id: int,
+    q: str = "",
+    status: str = "all",
+    days: int = 30,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("pos", "billing.read", "billing")),
+):
+    from fastapi.responses import StreamingResponse
+
+    from app.services.pdf_service import build_table_pdf
+
+    rows = _bill_history_rows(db, branch_id, q, status, days)
+    table_rows = [
+        [
+            r["number"],
+            r["invoice_kind"],
+            r["patient_name"],
+            r["status"],
+            f"{r['total']:,.0f}",
+            f"{r['paid']:,.0f}",
+            f"{r['balance']:,.0f}",
+            r["created_at"][:19].replace("T", " ") if r["created_at"] else "",
+        ]
+        for r in rows
+    ]
+    table_rows.append(["", "", "", "Totals", f"{sum(r['total'] for r in rows):,.0f}", f"{sum(r['paid'] for r in rows):,.0f}", f"{sum(r['balance'] for r in rows):,.0f}", ""])
+
+    buf = build_table_pdf(
+        title="Bill History",
+        meta=[("Status filter", status), ("Days", str(days))],
+        columns=["Bill No.", "Type", "Patient", "Status", "Total", "Paid", "Balance", "Date"],
+        rows=table_rows,
+        landscape_mode=True,
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="bill-history.pdf"'},
+    )
+
+
 @router.get("/doctors", response_model=list[UserOut])
 def counter_doctors(
     specialty: str | None = None,
@@ -1359,6 +1402,74 @@ def counter_analytics_export(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=analytics-report.xlsx"},
+    )
+
+
+@router.get("/analytics/export/pdf")
+def counter_analytics_export_pdf(
+    branch_id: int | None = None,
+    period: str = "month",
+    date_from: str | None = None,
+    date_to: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("pos", "billing", "accounts", "analytics", "reports")),
+):
+    from io import BytesIO
+
+    from fastapi.responses import StreamingResponse
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, Spacer
+
+    from app.services.pdf_service import header_elements, new_pdf_document, styled_table
+
+    a = _resolve_analytics(db, branch_id, period, date_from, date_to)
+    styles = getSampleStyleSheet()
+
+    buf = BytesIO()
+    doc = new_pdf_document(buf, landscape_mode=True)
+    elements = header_elements(
+        "Cashier Analytics Report",
+        [("Period", str(a.get("period_label", ""))), ("From", str(a.get("from_date", ""))[:10]), ("To", str(a.get("to_date", ""))[:10])],
+    )
+    elements.append(
+        styled_table(
+            ["Metric", "Value"],
+            [
+                ["Cash In", f"{a.get('total_collected', 0):,.0f}"],
+                ["Today's Billing", f"{a.get('total_billed', 0):,.0f}"],
+                ["Expenses", f"{a.get('total_expenses', 0):,.0f}"],
+                ["Net", f"{a.get('net', 0):,.0f}"],
+                ["Outstanding", f"{a.get('outstanding', 0):,.0f}"],
+                ["Total Bills", a.get("total_bills", 0)],
+                ["Paid Bills", a.get("paid_bills", 0)],
+                ["Avg per Paid Bill", f"{a.get('avg_bill', 0):,.0f}"],
+            ],
+        )
+    )
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Payment Methods", styles["Heading4"]))
+    elements.append(styled_table(["Method", "Amount"], [[p.get("method", ""), f"{p.get('amount', 0):,.0f}"] for p in a.get("payment_methods", []) or []]))
+    elements.append(Spacer(1, 10))
+
+    elements.append(Paragraph("By Department", styles["Heading4"]))
+    elements.append(styled_table(["Department", "Amount"], [[s.get("source", ""), f"{s.get('amount', 0):,.0f}"] for s in a.get("by_source", []) or []]))
+    elements.append(Spacer(1, 10))
+
+    elements.append(Paragraph("Doctor Income", styles["Heading4"]))
+    elements.append(
+        styled_table(
+            ["Doctor", "Bills", "Billed", "Fee Income"],
+            [[d.get("doctor", ""), d.get("bills", 0), f"{d.get('billed', 0):,.0f}", f"{d.get('fee_income', 0):,.0f}"] for d in a.get("by_doctor", []) or []],
+        )
+    )
+
+    doc.build(elements)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="analytics-report.pdf"'},
     )
 
 

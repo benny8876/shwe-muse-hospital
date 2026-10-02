@@ -14,6 +14,7 @@ import StatCard from '../../components/StatCard'
 import { formatMoney, formatDate } from '../../lib/format'
 import { announceCall } from '../../lib/voiceAnnounce'
 import { DOCTOR_SPECIALTY_PRESETS, normalizeSpecialty } from '../../lib/doctorSpecialties'
+import { downloadFile } from '../../lib/exportFile'
 
 export default function CashierCounterPage() {
   const branchId = useBranchId()
@@ -134,15 +135,7 @@ export default function CashierCounterPage() {
   async function exportExcel(url: string, params: Record<string, unknown>, filename: string) {
     setBusy(true)
     try {
-      const res = await api.get(url, { params, responseType: 'blob' })
-      const blobUrl = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a')
-      a.href = blobUrl
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(blobUrl)
+      await downloadFile(url, params, filename)
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -1053,6 +1046,14 @@ export default function CashierCounterPage() {
                 >
                   Export Excel
                 </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => exportExcel('/accounts/expenses/export/pdf', { branch_id: branchId, date_from: expenseFrom, date_to: expenseTo, category: expenseCategory }, 'expense-history.pdf')}
+                >
+                  Export PDF
+                </button>
               </div>
             </div>
             <DataTable
@@ -1421,6 +1422,20 @@ export default function CashierCounterPage() {
             >
               Export Excel
             </button>
+            <button
+              type="button"
+              disabled={busy || (analyticsPeriod === 'custom' && (!customFrom || !customTo))}
+              className="btn btn-secondary"
+              onClick={() => exportExcel(
+                '/counter/analytics/export/pdf',
+                analyticsPeriod === 'custom'
+                  ? { branch_id: branchId, date_from: customFrom, date_to: customTo }
+                  : { branch_id: branchId, period: analyticsPeriod },
+                'analytics-report.pdf',
+              )}
+            >
+              Export PDF
+            </button>
           </div>
 
           {analyticsPeriod === 'custom' && (
@@ -1649,6 +1664,14 @@ export default function CashierCounterPage() {
                     onClick={() => exportExcel('/counter/bill-history/export', { branch_id: branchId, q: historyQuery, status: historyStatus, days: 90 }, 'bill-history.xlsx')}
                   >
                     Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="btn btn-secondary whitespace-nowrap"
+                    onClick={() => exportExcel('/counter/bill-history/export/pdf', { branch_id: branchId, q: historyQuery, status: historyStatus, days: 90 }, 'bill-history.pdf')}
+                  >
+                    Export PDF
                   </button>
                 </div>
                 <DataTable rows={historyRows} columns={[

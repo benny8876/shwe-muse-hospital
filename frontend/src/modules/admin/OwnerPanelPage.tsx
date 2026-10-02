@@ -8,6 +8,7 @@ import StatCard from '../../components/StatCard'
 import StatusBadge from '../../components/StatusBadge'
 import Modal from '../../components/Modal'
 import { formatMoney, formatDate } from '../../lib/format'
+import { downloadFile } from '../../lib/exportFile'
 
 type Branch = { id: number; code: string; name: string; name_mm: string; is_main: boolean }
 
@@ -408,7 +409,26 @@ export default function OwnerPanelPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <input className="input max-w-sm" placeholder="Search medicine / SKU..." value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} />
-            <span className="text-sm text-slate-500">{items.length} item{items.length === 1 ? '' : 's'} · <span className="text-red-600 font-medium">{lowStockCount} low</span></span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-500">{items.length} item{items.length === 1 ? '' : 's'} · <span className="text-red-600 font-medium">{lowStockCount} low</span></span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  try {
+                    await downloadFile('/inventory/items/export/pdf', { branch_id: branchId === 'all' ? undefined : branchId }, 'stock-levels.pdf')
+                  } catch (e) {
+                    toast.error(getApiError(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                Export PDF
+              </button>
+            </div>
           </div>
           <DataTable
             rows={filteredItems}

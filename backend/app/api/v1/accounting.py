@@ -212,6 +212,44 @@ def export_expenses(
     )
 
 
+@router.get("/expenses/export/pdf")
+def export_expenses_pdf(
+    branch_id: int,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    category: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(require("accounts", "pos")),
+):
+    from app.services.pdf_service import build_table_pdf
+
+    q = db.query(Expense).filter(Expense.branch_id == branch_id)
+    if date_from:
+        q = q.filter(Expense.expense_date >= date_from)
+    if date_to:
+        q = q.filter(Expense.expense_date <= date_to)
+    if category.strip():
+        q = q.filter(Expense.category == category.strip())
+    rows = q.order_by(Expense.category, Expense.expense_date.desc(), Expense.id.desc()).limit(2000).all()
+    grand_total = sum(r.amount for r in rows)
+
+    table_rows = [[r.expense_date, r.category or "Uncategorized", r.name, r.paid_from, r.paid_by, f"{r.amount:,.0f}"] for r in rows]
+    table_rows.append(["", "", "", "", "GRAND TOTAL", f"{grand_total:,.0f}"])
+
+    buf = build_table_pdf(
+        title="Expense History Report",
+        meta=[("Period", f"{date_from or 'all'} — {date_to or 'all'}"), ("Category", category or "All")],
+        columns=["Date", "Category", "Name", "Paid From", "Paid By", "Amount"],
+        rows=table_rows,
+        landscape_mode=True,
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="expense-history.pdf"'},
+    )
+
+
 @router.get("/petty-cash")
 def petty(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require("accounts", "pos"))):
     return db.query(PettyCash).filter(PettyCash.branch_id == branch_id).first()

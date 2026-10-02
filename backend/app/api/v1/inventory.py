@@ -29,14 +29,7 @@ from app.services.utils import next_number
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 
-@router.get("/items")
-def items(
-    warehouse_id: int | None = None,
-    branch_id: int | None = None,
-    department: str | None = None,
-    db: Session = Depends(get_db),
-    _: User = Depends(require("inventory", "inventory.read", "pharmacy", "pos", "nursing", "reports")),
-):
+def _stock_rows(db: Session, *, warehouse_id: int | None, branch_id: int | None, department: str | None) -> list[dict]:
     # warehouse_id (a single warehouse) takes priority if both are given; otherwise
     # branch_id scopes to every warehouse that branch owns (Owner Panel's per-branch
     # stock view — catalog items themselves are global, only StockBatch is
@@ -47,10 +40,7 @@ def items(
         scope = [w.id for w in db.query(Warehouse).filter(Warehouse.branch_id == branch_id)]
     q = db.query(CatalogItem).filter(CatalogItem.is_stock == True)  # noqa: E712
     if department:
-        try:
-            q = apply_department(q, department)
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
+        q = apply_department(q, department)
     rows = q.order_by(CatalogItem.name).all()
     link_map = reagent_test_links_map(db, [r.id for r in rows]) if department == "lab" else {}
     out = []
@@ -67,6 +57,69 @@ def items(
             row["lab_tests"] = link_map.get(r.id, [])
         out.append(row)
     return out
+
+
+@router.get("/items")
+def items(
+    warehouse_id: int | None = None,
+    branch_id: int | None = None,
+    department: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("inventory", "inventory.read", "pharmacy", "pos", "nursing", "reports")),
+):
+    try:
+        return _stock_rows(db, warehouse_id=warehouse_id, branch_id=branch_id, department=department)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/items/export/pdf")
+def items_export_pdf(
+    warehouse_id: int | None = None,
+    branch_id: int | None = None,
+    department: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("inventory", "inventory.read", "pharmacy", "pos", "nursing", "reports")),
+):
+    from fastapi.responses import StreamingResponse
+
+    from app.models.org import Branch
+    from app.services.pdf_service import build_table_pdf
+
+    try:
+        rows = _stock_rows(db, warehouse_id=warehouse_id, branch_id=branch_id, department=department)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    scope_label = "All Branches"
+    if branch_id is not None:
+        b = db.get(Branch, branch_id)
+        scope_label = b.name if b else f"Branch #{branch_id}"
+    elif warehouse_id is not None:
+        w = db.get(Warehouse, warehouse_id)
+        scope_label = w.name if w else f"Warehouse #{warehouse_id}"
+
+    table_rows = [
+        [
+            r["item"].sku or "—",
+            r["item"].name,
+            r["on_hand"],
+            "LOW" if r["is_low"] else "OK",
+            r["nearest_expiry"] or "—",
+        ]
+        for r in rows
+    ]
+    buf = build_table_pdf(
+        title="Stock Levels",
+        meta=[("Scope", scope_label), ("Items", str(len(rows)))],
+        columns=["SKU", "Medicine / Item", "On Hand", "Status", "Nearest Expiry"],
+        rows=table_rows,
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="stock-levels.pdf"'},
+    )
 
 
 @router.get("/lab-tests")

@@ -8,6 +8,7 @@ import Alert from '../../components/Alert'
 import Modal from '../../components/Modal'
 import ToggleGroup from '../../components/ToggleGroup'
 import { formatMoney } from '../../lib/format'
+import { downloadFile } from '../../lib/exportFile'
 import LabReagentTestPicker, { type LabTestLink, type LabTestOption } from '../../components/LabReagentTestPicker'
 
 type StoreTab = 'stock' | 'alerts' | 'receive' | 'suppliers' | 'wastage'
@@ -297,6 +298,25 @@ export default function StoreCounterPage() {
       {tab === 'stock' && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  const params: Record<string, string | number> = { department: dept }
+                  if (warehouseId) params.warehouse_id = Number(warehouseId)
+                  await downloadFile('/inventory/items/export/pdf', params, 'stock-levels.pdf')
+                } catch (e) {
+                  toast.error(getApiError(e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Export PDF
+            </button>
             <button
               type="button"
               className="btn btn-primary btn-sm"
