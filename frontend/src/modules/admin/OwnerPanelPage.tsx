@@ -14,43 +14,87 @@ type Branch = { id: number; code: string; name: string; name_mm: string; is_main
 
 // Small line-icon chips for the stat cards (app-dashboard style) — kept local
 // to this page since they're finance-specific, unlike the clinical two-tone
-// icon set in components/icons/CounterIcons.tsx.
-function IconArrowUp() {
+// icon set in components/icons/CounterIcons.tsx. Every icon takes an optional
+// stroke `color` so the same shape can sit in a green/red/blue-tinted chip.
+type IconProps = { color?: string }
+function IconArrowUp({ color = 'var(--brand-600)' }: IconProps) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 19V5M5 12l7-7 7 7" />
     </svg>
   )
 }
-function IconArrowDown() {
+function IconArrowDown({ color = 'var(--brand-600)' }: IconProps) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 5v14M5 12l7 7 7-7" />
     </svg>
   )
 }
-function IconScale() {
+function IconScale({ color = 'var(--brand-600)' }: IconProps) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 20h16M7 20V11M12 20V5M17 20v8" />
     </svg>
   )
 }
-function IconClockIcon() {
+function IconClockIcon({ color = 'var(--brand-600)' }: IconProps) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 3" />
     </svg>
   )
 }
-function IconBox() {
+function IconBox({ color = 'var(--brand-600)' }: IconProps) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 8l-9-5-9 5 9 5 9-5Z" />
       <path d="M3 8v8l9 5 9-5V8" />
       <path d="M12 13v8" />
     </svg>
+  )
+}
+function IconReceipt({ color = 'var(--brand-600)' }: IconProps) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2Z" />
+      <path d="M9 8h6M9 12h6" />
+    </svg>
+  )
+}
+function IconPill({ color = 'var(--brand-600)' }: IconProps) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-45 12 12)" />
+      <path d="M9.5 9.5l5 5" />
+    </svg>
+  )
+}
+
+// A row with a small circular icon chip on the left and a value on the right
+// — the list-row counterpart to StatCard's tile, used for Income by Source /
+// Expenses by Category so every section of this page shares the same visual
+// language instead of only the top 4 stat tiles looking "app-like".
+function IconRow({ icon, color, label, sub, value, valueClassName = '' }: {
+  icon: React.ReactNode
+  color: string
+  label: React.ReactNode
+  sub?: React.ReactNode
+  value: React.ReactNode
+  valueClassName?: string
+}) {
+  return (
+    <div className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
+      <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `${color}1a` }}>
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium truncate">{label}</div>
+        {sub && <div className="text-xs text-slate-400 truncate">{sub}</div>}
+      </div>
+      <div className={`text-sm font-semibold shrink-0 ${valueClassName}`}>{value}</div>
+    </div>
   )
 }
 
@@ -351,8 +395,11 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No capital assets recorded yet</p>
                   ) : (
                     assets.map((r: any) => (
-                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
+                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-bg)' }}>
+                          <IconBox color="var(--status-danger-fg)" />
+                        </div>
+                        <div className="min-w-0 flex-1">
                           <div className="font-medium truncate">{r.name}</div>
                           <div className="text-xs text-slate-500 truncate">{r.category || '—'} · {formatDate(r.purchased_on)}</div>
                         </div>
@@ -397,23 +444,32 @@ export default function OwnerPanelPage() {
 
               <div className="grid lg:grid-cols-2 gap-4">
                 <div className="card rounded-2xl">
-                  <h3 className="font-semibold mb-3">Income by Source</h3>
-                  {(analytics.by_source || []).length === 0 && <p className="text-sm text-slate-500">No data</p>}
+                  <h3 className="font-semibold mb-1">Income by Source</h3>
+                  {(analytics.by_source || []).length === 0 && <p className="text-sm text-slate-500 py-2">No data</p>}
                   {(analytics.by_source || []).map((s: any) => (
-                    <div key={s.source} className="flex justify-between border-b py-2 text-sm">
-                      <span>{s.source}</span>
-                      <span className="font-medium text-green-700">{formatMoney(s.amount)}</span>
-                    </div>
+                    <IconRow
+                      key={s.source}
+                      icon={<IconArrowUp color="var(--status-success-fg)" />}
+                      color="var(--status-success-fg)"
+                      label={s.source}
+                      value={formatMoney(s.amount)}
+                      valueClassName="text-[var(--status-success-fg)]"
+                    />
                   ))}
                 </div>
                 <div className="card rounded-2xl">
-                  <h3 className="font-semibold mb-3">Expenses by Category</h3>
-                  {(analytics.by_expense_category || []).length === 0 && <p className="text-sm text-slate-500">No data</p>}
+                  <h3 className="font-semibold mb-1">Expenses by Category</h3>
+                  {(analytics.by_expense_category || []).length === 0 && <p className="text-sm text-slate-500 py-2">No data</p>}
                   {(analytics.by_expense_category || []).map((c: any) => (
-                    <div key={c.category} className="flex justify-between border-b py-2 text-sm">
-                      <span>{c.category} <span className="text-slate-400">×{c.count}</span></span>
-                      <span className="font-medium text-red-600">{formatMoney(c.amount)}</span>
-                    </div>
+                    <IconRow
+                      key={c.category}
+                      icon={<IconArrowDown color="var(--status-danger-fg)" />}
+                      color="var(--status-danger-fg)"
+                      label={c.category}
+                      sub={`×${c.count}`}
+                      value={formatMoney(c.amount)}
+                      valueClassName="text-[var(--status-danger-fg)]"
+                    />
                   ))}
                 </div>
               </div>
@@ -426,8 +482,11 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
                   ) : (
                     (analytics.expense_details || []).map((r: any) => (
-                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
+                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-bg)' }}>
+                          <IconReceipt color="var(--status-danger-fg)" />
+                        </div>
+                        <div className="min-w-0 flex-1">
                           <div className="font-medium truncate">{r.category}</div>
                           <div className="text-xs text-slate-500 truncate">
                             {formatDate(String(r.created_at))}
@@ -491,8 +550,14 @@ export default function OwnerPanelPage() {
             ) : (
               filteredItems.map((r: any) => (
                 <div key={r.item.id} className="rounded-xl border border-slate-200 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: r.is_low ? 'var(--status-danger-bg)' : 'var(--status-success-bg)' }}
+                    >
+                      <IconPill color={r.is_low ? 'var(--status-danger-fg)' : 'var(--status-success-fg)'} />
+                    </div>
+                    <div className="min-w-0 flex-1">
                       <div className="font-medium truncate">{r.item.name}</div>
                       <div className="text-xs text-slate-500">{r.item.sku || '—'}</div>
                     </div>

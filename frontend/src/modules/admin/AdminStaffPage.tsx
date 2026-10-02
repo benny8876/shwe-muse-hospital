@@ -157,7 +157,7 @@ export default function AdminStaffPage() {
       <PageHeader title="Staff Accounts" subtitle="Counter login account တွေကို ဖန်တီး/ပြင်ဆင်/disable လုပ်ပါ" />
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="card space-y-3">
+        <div className="card rounded-2xl space-y-3">
           <h3 className="font-semibold">Add Staff Account</h3>
           <input className="input" placeholder="Username *" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
           <input className="input" type="password" placeholder="Password * (min 8, upper/lower/digit/symbol)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
@@ -180,35 +180,87 @@ export default function AdminStaffPage() {
 
         <div className="lg:col-span-2 space-y-3">
           <input className="input" placeholder="Search username / name / role / employee code" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <DataTable
-            rows={filtered}
-            columns={[
-              { key: 'username', label: 'Username', render: (r) => <span className="font-mono text-sm">{r.username}</span> },
-              { key: 'name', label: 'Full Name', render: (r) => String(r.full_name) },
-              { key: 'role', label: 'Role', render: (r) => <StatusBadge value={String(r.role).toUpperCase()} /> },
-              { key: 'branch', label: 'Branch', render: (r) => branches.find((b) => b.id === r.branch_id)?.name || '—' },
-              { key: 'phone', label: 'Phone', render: (r) => String(r.phone || '—') },
-              { key: 'status', label: 'Status', render: (r) => (
-                <span className={`badge ${r.is_active ? 'bg-[var(--status-success-bg)] text-[var(--status-success-fg)]' : 'bg-[var(--status-neutral-bg)] text-[var(--status-neutral-fg)]'}`}>
-                  {r.is_active ? 'Active' : 'Disabled'}
-                </span>
-              ) },
-              { key: 'act', label: '', render: (r) => (
-                isBranchAdmin && ADMIN_TIER_ROLES.includes(r.role) ? (
-                  <span className="text-xs text-slate-400">—</span>
-                ) : (
-                  <div className="flex gap-1 flex-wrap">
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditStaff(r)}>Edit</button>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setResetTarget(r); setNewPassword('') }}>Reset PW</button>
-                    {!['super_admin', 'hospital_admin'].includes(r.role) && (
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
+
+          {/* Mobile: avatar-chip card list instead of a cramped, horizontally
+              scrolled table. Desktop keeps the table. */}
+          <div className="lg:hidden space-y-2">
+            {filtered.length === 0 ? (
+              <div className="card rounded-2xl text-center text-slate-500 text-sm py-6">No staff accounts</div>
+            ) : (
+              filtered.map((r) => {
+                const locked = isBranchAdmin && ADMIN_TIER_ROLES.includes(r.role)
+                return (
+                  <div key={r.id} className="card rounded-2xl">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="h-10 w-10 rounded-full flex items-center justify-center shrink-0 font-semibold"
+                        style={{
+                          background: r.is_active ? 'var(--brand-50)' : 'var(--status-neutral-bg)',
+                          color: r.is_active ? 'var(--brand-700)' : 'var(--status-neutral-fg)',
+                        }}
+                      >
+                        {r.full_name.trim().charAt(0).toUpperCase() || '?'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium truncate">{r.full_name}</div>
+                        <div className="text-xs text-slate-500 font-mono truncate">{r.username}</div>
+                      </div>
+                      <span className={`badge shrink-0 ${r.is_active ? 'bg-[var(--status-success-bg)] text-[var(--status-success-fg)]' : 'bg-[var(--status-neutral-bg)] text-[var(--status-neutral-fg)]'}`}>
+                        {r.is_active ? 'Active' : 'Disabled'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-slate-500">
+                      <StatusBadge value={r.role.toUpperCase()} />
+                      <span>{branches.find((b) => b.id === r.branch_id)?.name || 'No branch'}</span>
+                      {r.phone && <span>· {r.phone}</span>}
+                    </div>
+                    {!locked && (
+                      <div className="flex gap-1.5 flex-wrap mt-3 pt-3 border-t border-slate-100">
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditStaff(r)}>Edit</button>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setResetTarget(r); setNewPassword('') }}>Reset PW</button>
+                        {!['super_admin', 'hospital_admin'].includes(r.role) && (
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
+                        )}
+                      </div>
                     )}
                   </div>
                 )
-              ) },
-            ]}
-            emptyText="No staff accounts"
-          />
+              })
+            )}
+          </div>
+
+          <div className="hidden lg:block">
+            <DataTable
+              wrapperClassName="rounded-2xl"
+              rows={filtered}
+              columns={[
+                { key: 'username', label: 'Username', render: (r) => <span className="font-mono text-sm">{r.username}</span> },
+                { key: 'name', label: 'Full Name', render: (r) => String(r.full_name) },
+                { key: 'role', label: 'Role', render: (r) => <StatusBadge value={String(r.role).toUpperCase()} /> },
+                { key: 'branch', label: 'Branch', render: (r) => branches.find((b) => b.id === r.branch_id)?.name || '—' },
+                { key: 'phone', label: 'Phone', render: (r) => String(r.phone || '—') },
+                { key: 'status', label: 'Status', render: (r) => (
+                  <span className={`badge ${r.is_active ? 'bg-[var(--status-success-bg)] text-[var(--status-success-fg)]' : 'bg-[var(--status-neutral-bg)] text-[var(--status-neutral-fg)]'}`}>
+                    {r.is_active ? 'Active' : 'Disabled'}
+                  </span>
+                ) },
+                { key: 'act', label: '', render: (r) => (
+                  isBranchAdmin && ADMIN_TIER_ROLES.includes(r.role) ? (
+                    <span className="text-xs text-slate-400">—</span>
+                  ) : (
+                    <div className="flex gap-1 flex-wrap">
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditStaff(r)}>Edit</button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setResetTarget(r); setNewPassword('') }}>Reset PW</button>
+                      {!['super_admin', 'hospital_admin'].includes(r.role) && (
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
+                      )}
+                    </div>
+                  )
+                ) },
+              ]}
+              emptyText="No staff accounts"
+            />
+          </div>
         </div>
       </div>
 
