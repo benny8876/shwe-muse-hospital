@@ -92,6 +92,15 @@ ALL_FEATURE_KEYS = sorted(
 ROLE_COUNTER_DEFAULTS: dict[str, list[str]] = {
     "super_admin": list(COUNTER_KEYS),
     "hospital_admin": list(COUNTER_KEYS),
+    # Every day-to-day operational counter for their own branch (the actual
+    # branch_id scoping comes from their own User.branch_id, same as any other
+    # counter staff account) — but never "admin" (the Admin Panel pseudo-key)
+    # or "ward-management", which stay owner-only. This list is returned to the
+    # frontend as a non-empty allowed_counters array, which both
+    # visibleCounters() and CounterGuard's canAccessCounter() then use to
+    # decide access *instead of* the per-counter role arrays in App.tsx /
+    # counterLinks.ts — so this one list is the only place that needs updating.
+    "branch_admin": [c for c in COUNTER_KEYS if c not in ("admin", "ward-management")],
     "executive": ["cashier", "patient-records"],
     "cashier": ["cashier", "patient-records", "store"],
     "receptionist": ["reception", "appointments", "patient-records"],

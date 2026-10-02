@@ -118,3 +118,26 @@ def test_branch_admin_cannot_touch_other_branch_or_admin_accounts(client, admin_
 def test_non_admin_cannot_reach_staff_endpoints(client, cashier_headers):
     r = client.get("/api/v1/admin/staff", headers=cashier_headers)
     assert r.status_code == 403
+
+
+def test_branch_admin_can_use_counter_operations_but_not_owner_endpoints(client, admin_headers, auth_headers):
+    r = client.post(
+        "/api/v1/admin/branches",
+        json={"code": _unique("BD"), "name": "Branch Admin Test Branch 4"},
+        headers=admin_headers,
+    )
+    branch_id = r.json()["id"]
+    ba = _make_branch_admin(client, admin_headers, auth_headers, branch_id)
+
+    # Full counter-level operations (same permission a cashier/receptionist uses).
+    r = client.get("/api/v1/counter/active-patients", params={"branch_id": branch_id}, headers=ba["headers"])
+    assert r.status_code == 200
+
+    # But still locked out of owner-only admin tooling — "*" in PERMS never
+    # grants the "__admin__" sentinel (see app/core/rbac.py's comment).
+    r = client.get("/api/v1/admin/branches", headers=ba["headers"])
+    assert r.status_code == 403
+    r = client.get("/api/v1/admin/wards", params={"branch_id": branch_id}, headers=ba["headers"])
+    assert r.status_code == 403
+    r = client.get("/api/v1/admin/capital-assets", params={"branch_id": branch_id}, headers=ba["headers"])
+    assert r.status_code == 403

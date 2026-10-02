@@ -23,9 +23,17 @@ ROLES = [
 PERMS = {
     "super_admin": ["*"],
     "hospital_admin": ["*"],
-    # Scoped to their own branch's Staff Accounts only — enforced explicitly in
-    # app/api/v1/admin.py's staff endpoints, not via this generic perm list.
-    "branch_admin": [],
+    # Full day-to-day counter operations (reception, pharmacy, lab, cashier, ...)
+    # for their own branch — "*" here expands to every permission string that
+    # appears anywhere in this PERMS dict (see app/core/access.py's
+    # ALL_PERMISSIONS/role_permissions), which crucially never includes the
+    # "__admin__" sentinel (that string is never a value in this dict — it's
+    # checked only via the explicit role allowlists in app/api/v1/admin.py and
+    # the super_admin/hospital_admin bypass in app/core/deps.py's require()).
+    # So branch_admin gets every counter action but stays locked out of
+    # Owner Panel / branches / wards / capital assets / sync, and its Staff
+    # Accounts access is separately scoped to its own branch in admin.py.
+    "branch_admin": ["*"],
     "executive": ["analytics", "reports", "kpi"],
     "cashier": ["pos", "billing", "patients.read", "shifts", "accounts", "inventory", "inventory.read"],
     "receptionist": ["patients", "appointments", "queue", "front_desk", "billing.create", "patients.read"],
