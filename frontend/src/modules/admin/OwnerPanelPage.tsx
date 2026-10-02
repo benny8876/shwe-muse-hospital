@@ -323,31 +323,57 @@ export default function OwnerPanelPage() {
               </div>
 
               <div className="card space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-semibold">Capital Assets — lab/X-ray machines, other big one-time equipment</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="font-semibold">Capital Assets</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Lab/X-ray machines, other big one-time equipment</p>
+                  </div>
                   <button
                     type="button"
-                    className="btn btn-primary btn-sm whitespace-nowrap"
+                    className="btn btn-primary btn-sm whitespace-nowrap shrink-0"
                     disabled={typeof branchId !== 'number'}
                     onClick={() => setAssetModalOpen(true)}
                   >
-                    + Add Asset
+                    + Add
                   </button>
                 </div>
                 {branchId === 'all' && <p className="text-xs text-slate-500">Select a specific branch to add a new asset — showing the combined total here.</p>}
-                <DataTable
-                  rows={assets}
-                  columns={[
-                    { key: 'name', label: 'Name', render: (r: any) => <span className="font-medium">{r.name}</span> },
-                    { key: 'category', label: 'Category', render: (r: any) => r.category || '—' },
-                    { key: 'date', label: 'Purchased', render: (r: any) => formatDate(r.purchased_on) },
-                    { key: 'cost', label: 'Cost', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(r.cost)}</span> },
-                    { key: 'act', label: '', render: (r: any) => (
-                      <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => void removeAsset(r.id)}>Remove</button>
-                    ) },
-                  ]}
-                  emptyText="No capital assets recorded yet"
-                />
+
+                {/* Mobile: a stacked card list reads far better than a cramped,
+                    horizontally-scrolled table on a phone. Desktop keeps the table. */}
+                <div className="sm:hidden space-y-2">
+                  {assets.length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-4">No capital assets recorded yet</p>
+                  ) : (
+                    assets.map((r: any) => (
+                      <div key={r.id} className="rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{r.name}</div>
+                          <div className="text-xs text-slate-500 truncate">{r.category || '—'} · {formatDate(r.purchased_on)}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-semibold text-red-600">{formatMoney(r.cost)}</div>
+                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => void removeAsset(r.id)}>Remove</button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="hidden sm:block">
+                  <DataTable
+                    rows={assets}
+                    columns={[
+                      { key: 'name', label: 'Name', render: (r: any) => <span className="font-medium">{r.name}</span> },
+                      { key: 'category', label: 'Category', render: (r: any) => r.category || '—' },
+                      { key: 'date', label: 'Purchased', render: (r: any) => formatDate(r.purchased_on) },
+                      { key: 'cost', label: 'Cost', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(r.cost)}</span> },
+                      { key: 'act', label: '', render: (r: any) => (
+                        <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => void removeAsset(r.id)}>Remove</button>
+                      ) },
+                    ]}
+                    emptyText="No capital assets recorded yet"
+                  />
+                </div>
               </div>
 
               {assetModalOpen && (
@@ -388,17 +414,39 @@ export default function OwnerPanelPage() {
 
               <div className="card">
                 <h3 className="font-semibold mb-3">Recent Expenses</h3>
-                <DataTable
-                  rows={analytics.expense_details || []}
-                  columns={[
-                    { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.created_at)) },
-                    { key: 'category', label: 'Category', render: (r: any) => String(r.category) },
-                    { key: 'name', label: 'Name', render: (r: any) => r.name || '—' },
-                    { key: 'paid_by', label: 'Paid By', render: (r: any) => r.paid_by || '—' },
-                    { key: 'amount', label: 'Amount', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(Number(r.amount))}</span> },
-                  ]}
-                  emptyText="No expenses in this period"
-                />
+
+                <div className="sm:hidden space-y-2">
+                  {(analytics.expense_details || []).length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
+                  ) : (
+                    (analytics.expense_details || []).map((r: any) => (
+                      <div key={r.id} className="rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{r.category}</div>
+                          <div className="text-xs text-slate-500 truncate">
+                            {formatDate(String(r.created_at))}
+                            {r.name ? ` · ${r.name}` : ''}
+                            {r.paid_by ? ` · ${r.paid_by}` : ''}
+                          </div>
+                        </div>
+                        <div className="font-semibold text-red-600 shrink-0">{formatMoney(Number(r.amount))}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="hidden sm:block">
+                  <DataTable
+                    rows={analytics.expense_details || []}
+                    columns={[
+                      { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.created_at)) },
+                      { key: 'category', label: 'Category', render: (r: any) => String(r.category) },
+                      { key: 'name', label: 'Name', render: (r: any) => r.name || '—' },
+                      { key: 'paid_by', label: 'Paid By', render: (r: any) => r.paid_by || '—' },
+                      { key: 'amount', label: 'Amount', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(Number(r.amount))}</span> },
+                    ]}
+                    emptyText="No expenses in this period"
+                  />
+                </div>
               </div>
             </>
           )}
@@ -430,20 +478,43 @@ export default function OwnerPanelPage() {
               </button>
             </div>
           </div>
-          <DataTable
-            rows={filteredItems}
-            keyField={(r: any) => r.item.id}
-            columns={[
-              { key: 'name', label: 'Medicine', render: (r: any) => <span className="font-medium">{r.item.name}</span> },
-              { key: 'sku', label: 'SKU', render: (r: any) => r.item.sku || '—' },
-              { key: 'on_hand', label: 'Stock Left', className: 'text-right', render: (r: any) => (
-                <span className={r.is_low ? 'text-red-600 font-semibold' : 'font-semibold'}>{r.on_hand}</span>
-              ) },
-              { key: 'status', label: 'Status', render: (r: any) => <StatusBadge value={r.is_low ? 'LOW' : 'OK'} /> },
-              { key: 'expiry', label: 'Nearest Expiry', render: (r: any) => r.nearest_expiry ? formatDate(r.nearest_expiry) : '—' },
-            ]}
-            emptyText={busy ? 'Loading...' : 'No medicine found'}
-          />
+          <div className="sm:hidden space-y-2">
+            {filteredItems.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-4">{busy ? 'Loading...' : 'No medicine found'}</p>
+            ) : (
+              filteredItems.map((r: any) => (
+                <div key={r.item.id} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{r.item.name}</div>
+                      <div className="text-xs text-slate-500">{r.item.sku || '—'}</div>
+                    </div>
+                    <StatusBadge value={r.is_low ? 'LOW' : 'OK'} />
+                  </div>
+                  <div className="flex items-center justify-between mt-2 text-sm">
+                    <span className={r.is_low ? 'text-red-600 font-semibold' : 'font-semibold'}>{r.on_hand} in stock</span>
+                    <span className="text-xs text-slate-400">{r.nearest_expiry ? formatDate(r.nearest_expiry) : '—'}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="hidden sm:block">
+            <DataTable
+              rows={filteredItems}
+              keyField={(r: any) => r.item.id}
+              columns={[
+                { key: 'name', label: 'Medicine', render: (r: any) => <span className="font-medium">{r.item.name}</span> },
+                { key: 'sku', label: 'SKU', render: (r: any) => r.item.sku || '—' },
+                { key: 'on_hand', label: 'Stock Left', className: 'text-right', render: (r: any) => (
+                  <span className={r.is_low ? 'text-red-600 font-semibold' : 'font-semibold'}>{r.on_hand}</span>
+                ) },
+                { key: 'status', label: 'Status', render: (r: any) => <StatusBadge value={r.is_low ? 'LOW' : 'OK'} /> },
+                { key: 'expiry', label: 'Nearest Expiry', render: (r: any) => r.nearest_expiry ? formatDate(r.nearest_expiry) : '—' },
+              ]}
+              emptyText={busy ? 'Loading...' : 'No medicine found'}
+            />
+          </div>
         </div>
       )}
     </div>
