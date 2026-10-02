@@ -126,12 +126,13 @@ body {
   @page { size: A4; margin: 12mm; }
   .no-print { display: none !important; }
   .print-only { display: block !important; }
-  /* .print-only's `display: block !important` above beats a Tailwind
-     `flex` class regardless of source order (both are !important-free vs
-     !important, or equal-specificity single-class selectors) — so a
-     print-only container that needs flex layout (e.g. LabTemplateResult's
-     footer pinned to the page bottom via `flex flex-col` + `mt-auto`)
-     silently loses it at print time unless it also carries this class,
-     declared after .print-only so it wins the tie on `display`. */
-  .print-flex { display: flex !important; }
+  /* A running footer that repeats on every printed page, not content pinned
+     to the bottom of a single page — `position: fixed` in a print stylesheet
+     is positioned relative to each page box, so the browser re-paints it at
+     the same spot on every page the document spans. `bottom: 0` lands right
+     at the page's printable edge since `@page`'s `margin: 12mm` above already
+     reserves the blank space beyond it on all four sides. Needs `!important`
+     for the same reason `.print-only` does: it must beat `.print-only`'s own
+     `display: block !important` when both classes land on the same element. */
+  .print-footer { display: block !important; position: fixed; bottom: 0; left: 0; right: 0; }
 }

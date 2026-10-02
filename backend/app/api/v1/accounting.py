@@ -68,8 +68,12 @@ def create_expense(data: ExpenseIn, db: Session = Depends(get_db), user: User = 
     )
     db.add(exp)
     post_expense(db, data.category, data.amount, data.paid_from)
+    # The petty-cash balance tracks the physical cash box specifically — an
+    # expense paid via KPay/Wave moves money out of that e-wallet, not the
+    # till, so it shouldn't touch this balance (it already posts to its own
+    # ledger account — 1010/1011 — via post_expense() above).
     petty = db.query(PettyCash).filter(PettyCash.branch_id == data.branch_id).first()
-    if petty and data.paid_from == "petty":
+    if petty and data.paid_from == "cash":
         petty.balance -= data.amount
     db.commit()
     db.refresh(exp)

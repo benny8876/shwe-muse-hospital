@@ -8,9 +8,11 @@ from app.models.inventory import StockBatch, StockMovement, WastageLog
 from app.services.utils import audit
 
 
-def stock_on_hand(db: Session, item_id: int, warehouse_id: int | None = None) -> float:
+def stock_on_hand(db: Session, item_id: int, warehouse_id: int | list[int] | None = None) -> float:
     q = db.query(func.coalesce(func.sum(StockBatch.qty), 0)).filter(StockBatch.item_id == item_id)
-    if warehouse_id:
+    if isinstance(warehouse_id, list):
+        q = q.filter(StockBatch.warehouse_id.in_(warehouse_id))
+    elif warehouse_id:
         q = q.filter(StockBatch.warehouse_id == warehouse_id)
     return float(q.scalar() or 0)
 
@@ -174,9 +176,11 @@ def reagent_test_links_map(db: Session, reagent_ids: list[int]) -> dict[int, lis
     return out
 
 
-def nearest_expiry(db: Session, item_id: int, warehouse_id: int | None = None) -> date | None:
+def nearest_expiry(db: Session, item_id: int, warehouse_id: int | list[int] | None = None) -> date | None:
     q = db.query(StockBatch).filter(StockBatch.item_id == item_id, StockBatch.qty > 0, StockBatch.expiry_date.isnot(None))
-    if warehouse_id:
+    if isinstance(warehouse_id, list):
+        q = q.filter(StockBatch.warehouse_id.in_(warehouse_id))
+    elif warehouse_id:
         q = q.filter(StockBatch.warehouse_id == warehouse_id)
     batch = q.order_by(StockBatch.expiry_date.asc()).first()
     return batch.expiry_date if batch else None

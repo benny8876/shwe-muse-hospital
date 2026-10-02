@@ -9,7 +9,7 @@ from app.models.billing import Invoice, InvoiceLine, Payment
 from app.models.catalog import CatalogItem, LabTestReagent
 from app.models.clinical import QueueToken, Visit
 from app.models.ipd import Admission, Bed, Ward, WardMedOrder
-from app.models.org import Warehouse
+from app.models.org import Branch, Warehouse
 from app.models.patients import Patient
 from app.models.users import User
 from app.services.billing_service import add_line, create_invoice, recalc_invoice
@@ -823,6 +823,13 @@ SOURCE_LABELS = {
     "lab": "Lab",
 }
 
+INVOICE_KIND_LABELS = {
+    "opd": "OPD",
+    "ipd": "IPD",
+    "pharmacy": "Pharmacy",
+    "other": "Other",
+}
+
 
 def _period_start(period: str) -> datetime:
     now = datetime.utcnow()
@@ -928,6 +935,33 @@ def _cashier_analytics_since(db: Session, branch_id: int, *, since: datetime, un
         if float(r[1] or 0) > 0
     ]
     by_source.sort(key=lambda x: x["amount"], reverse=True)
+
+    kind_billed_rows = (
+        db.query(Invoice.kind, func.sum(Invoice.total), func.count(Invoice.id))
+        .filter(Invoice.branch_id == branch_id, Invoice.created_at >= since, Invoice.created_at <= until)
+        .group_by(Invoice.kind)
+        .all()
+    )
+    kind_collected_rows = (
+        db.query(Invoice.kind, func.sum(Payment.amount))
+        .join(Invoice)
+        .filter(*pay_filter)
+        .group_by(Invoice.kind)
+        .all()
+    )
+    collected_by_kind = {str(r[0] or "other"): float(r[1] or 0) for r in kind_collected_rows}
+    by_invoice_kind = [
+        {
+            "kind": str(r[0] or "other"),
+            "label": INVOICE_KIND_LABELS.get(str(r[0]), str(r[0] or "Other").title()),
+            "billed": float(r[1] or 0),
+            "bills": int(r[2] or 0),
+            "collected": collected_by_kind.get(str(r[0] or "other"), 0.0),
+        }
+        for r in kind_billed_rows
+        if float(r[1] or 0) > 0
+    ]
+    by_invoice_kind.sort(key=lambda x: x["billed"], reverse=True)
 
     unit_cost_expr = case(
         (InvoiceLine.unit_cost > 0, InvoiceLine.unit_cost),
@@ -1071,11 +1105,91 @@ def _cashier_analytics_since(db: Session, branch_id: int, *, since: datetime, un
         "avg_bill": round(total_collected / paid_bills) if paid_bills else 0,
         "payment_methods": payment_methods,
         "by_source": by_source,
+        "by_invoice_kind": by_invoice_kind,
         "pharmacy_profit": pharmacy_profit_data,
         "by_doctor": by_doctor,
         "by_expense_category": by_expense_category,
         "expense_details": expense_details,
         "trend": trend,
+    }
+
+
+def _merge_keyed(rows_by_branch: list[list[dict]], key: str, sum_fields: list[str]) -> list[dict]:
+    """Merges several branches' list-of-dict breakdowns (by_source, by_doctor,
+    by_expense_category, payment_methods, trend, ...) into one, summing the
+    given numeric fields for entries that share the same `key` value across
+    branches — e.g. two branches' "KPAY" payment-method rows become one row
+    with the combined amount, instead of two separate "KPAY" rows."""
+    merged: dict[object, dict] = {}
+    for rows in rows_by_branch:
+        for row in rows:
+            k = row[key]
+            if k not in merged:
+                merged[k] = dict(row)
+            else:
+                for f in sum_fields:
+                    merged[k][f] = merged[k].get(f, 0) + row.get(f, 0)
+    return list(merged.values())
+
+
+def cashier_analytics_combined(db: Session, period: str = "month", date_from: str | None = None, date_to: str | None = None) -> dict:
+    """Combined "All Branches" view — calls the existing, already-correct
+    per-branch cashier_analytics()/cashier_analytics_range() once per branch
+    and numerically merges the results, rather than rewriting that function's
+    ~15 branch-scoped filters to be conditionally branch-wide (much higher
+    risk of a subtle reporting bug than summing already-correct per-branch
+    numbers)."""
+    branches = db.query(Branch).filter(Branch.is_active == True).all()  # noqa: E712
+    if not branches:
+        raise ValueError("No branches found")
+
+    if date_from and date_to:
+        start = datetime.fromisoformat(date_from)
+        end = datetime.fromisoformat(date_to).replace(hour=23, minute=59, second=59)
+        per_branch = [cashier_analytics_range(db, b.id, start, end) for b in branches]
+    else:
+        per_branch = [cashier_analytics(db, b.id, period) for b in branches]
+
+    first = per_branch[0]
+    total_collected = sum(a["total_collected"] for a in per_branch)
+    total_expenses = sum(a["total_expenses"] for a in per_branch)
+    paid_bills = sum(a["paid_bills"] for a in per_branch)
+    pharmacy_revenue = sum(a["pharmacy_profit"]["revenue"] for a in per_branch)
+    pharmacy_cost = sum(a["pharmacy_profit"]["cost"] for a in per_branch)
+    pharmacy_profit = pharmacy_revenue - pharmacy_cost
+
+    return {
+        "period": first["period"],
+        "period_label": first["period_label"],
+        "from_date": first["from_date"],
+        "to_date": first["to_date"],
+        "total_collected": total_collected,
+        "collected_today_bills": sum(a["collected_today_bills"] for a in per_branch),
+        "collected_older_bills": sum(a["collected_older_bills"] for a in per_branch),
+        "total_billed": sum(a["total_billed"] for a in per_branch),
+        "total_expenses": total_expenses,
+        "net": total_collected - total_expenses,
+        "total_bills": sum(a["total_bills"] for a in per_branch),
+        "paid_bills": paid_bills,
+        "outstanding": sum(a["outstanding"] for a in per_branch),
+        "avg_bill": round(total_collected / paid_bills) if paid_bills else 0,
+        "payment_methods": _merge_keyed([a["payment_methods"] for a in per_branch], "method", ["amount"]),
+        "by_source": _merge_keyed([a["by_source"] for a in per_branch], "source", ["amount"]),
+        "by_invoice_kind": _merge_keyed([a["by_invoice_kind"] for a in per_branch], "kind", ["billed", "bills", "collected"]),
+        "pharmacy_profit": {
+            "revenue": pharmacy_revenue,
+            "cost": pharmacy_cost,
+            "profit": pharmacy_profit,
+            "margin_pct": round(pharmacy_profit / pharmacy_revenue * 100, 1) if pharmacy_revenue > 0 else 0,
+        },
+        "by_doctor": _merge_keyed([a["by_doctor"] for a in per_branch], "doctor_id", ["fee_income", "billed", "bills"]),
+        "by_expense_category": _merge_keyed([a["by_expense_category"] for a in per_branch], "category", ["amount", "count"]),
+        "expense_details": sorted(
+            (e for a in per_branch for e in a["expense_details"]),
+            key=lambda e: e["created_at"] or "",
+            reverse=True,
+        )[:50],
+        "trend": sorted(_merge_keyed([a["trend"] for a in per_branch], "label", ["amount"]), key=lambda t: t["label"]),
     }
 
 

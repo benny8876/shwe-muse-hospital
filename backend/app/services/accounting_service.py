@@ -62,7 +62,8 @@ def post_refund(db: Session, inv: Invoice, payment: Payment, method: str):
 
 def post_expense(db: Session, category: str, amount: float, paid_from: str):
     expense_code = "5000"
-    cash_code = "1000" if paid_from == "petty" else "1030"
+    cash_codes = {"cash": "1000", "kpay": "1010", "wave": "1011"}
+    cash_code = cash_codes.get(paid_from, "1030")
     post_entry(
         db,
         ref=f"EXP-{category}",

@@ -18,10 +18,15 @@ const emptyBranchForm = { code: '', name: '', name_mm: '', address: '', phone: '
 // (/counter/analytics), and stock reuses /inventory/items with the new
 // branch_id filter (sums on_hand across every warehouse that branch owns)
 // instead of building parallel reporting logic.
+// 'all' = combined-across-branches view; a number is a single branch's id.
+type BranchSelection = number | 'all'
+
+const emptyAssetForm = { name: '', category: '', cost: '', purchased_on: '', notes: '' }
+
 export default function OwnerPanelPage() {
   const toast = useToast()
   const [branches, setBranches] = useState<Branch[]>([])
-  const [branchId, setBranchId] = useState<number | null>(null)
+  const [branchId, setBranchId] = useState<BranchSelection | null>(null)
   const [sub, setSub] = useState<'income' | 'stock'>('income')
   const [period, setPeriod] = useState<'day' | 'month' | '3m' | 'year'>('month')
   const [analytics, setAnalytics] = useState<any>(null)
@@ -32,6 +37,9 @@ export default function OwnerPanelPage() {
   const [branchForm, setBranchForm] = useState(emptyBranchForm)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [assets, setAssets] = useState<any[]>([])
+  const [assetForm, setAssetForm] = useState(emptyAssetForm)
+  const [assetModalOpen, setAssetModalOpen] = useState(false)
 
   async function loadBranches() {
     try {
@@ -74,7 +82,9 @@ export default function OwnerPanelPage() {
   async function loadAnalytics() {
     setBusy(true)
     try {
-      const { data } = await api.get('/counter/analytics', { params: { branch_id: branchId, period } })
+      // branch_id omitted entirely (not even "undefined" as a string) = the backend's
+      // combined "All Branches" path — axios drops params that are literally undefined.
+      const { data } = await api.get('/counter/analytics', { params: { branch_id: branchId === 'all' ? undefined : branchId, period } })
       setAnalytics(data)
     } catch (e) {
       toast.error(getApiError(e))
@@ -86,7 +96,7 @@ export default function OwnerPanelPage() {
   async function loadItems() {
     setBusy(true)
     try {
-      const { data } = await api.get('/inventory/items', { params: { branch_id: branchId } })
+      const { data } = await api.get('/inventory/items', { params: { branch_id: branchId === 'all' ? undefined : branchId } })
       setItems(data)
     } catch (e) {
       toast.error(getApiError(e))
@@ -95,14 +105,66 @@ export default function OwnerPanelPage() {
     }
   }
 
+  // Capital assets are owned by one branch each (a new one must be attached to a
+  // specific branch), but the "All Branches" view still shows their combined total —
+  // fetched by looping branches rather than adding a server-side "all" mode for what's
+  // normally a short, infrequently-added list.
+  async function loadAssets() {
+    try {
+      if (branchId === 'all') {
+        const results = await Promise.all(branches.map((b) => api.get('/admin/capital-assets', { params: { branch_id: b.id } })))
+        setAssets(results.flatMap((r) => r.data))
+      } else if (branchId) {
+        const { data } = await api.get('/admin/capital-assets', { params: { branch_id: branchId } })
+        setAssets(data)
+      }
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }
+
+  async function addAsset() {
+    if (!assetForm.name.trim() || !assetForm.cost) return toast.error('Asset name နဲ့ cost လိုအပ်ပါတယ်')
+    if (typeof branchId !== 'number') return toast.error('Branch တစ်ခုချင်းစီ ရွေးမှ asset ထည့်လို့ရပါတယ်')
+    setBusy(true)
+    try {
+      await api.post('/admin/capital-assets', {
+        branch_id: branchId,
+        name: assetForm.name.trim(),
+        category: assetForm.category.trim(),
+        cost: Number(assetForm.cost),
+        purchased_on: assetForm.purchased_on || undefined,
+        notes: assetForm.notes.trim(),
+      })
+      toast.success('Capital asset added')
+      setAssetForm(emptyAssetForm)
+      setAssetModalOpen(false)
+      await loadAssets()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeAsset(id: number) {
+    try {
+      await api.delete(`/admin/capital-assets/${id}`)
+      toast.success('Removed')
+      await loadAssets()
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }
+
   useEffect(() => {
-    if (!branchId) return
-    if (sub === 'income') void loadAnalytics()
+    if (!branchId || branches.length === 0) return
+    if (sub === 'income') { void loadAnalytics(); void loadAssets() }
     if (sub === 'stock') void loadItems()
-  }, [branchId, sub, period])
+  }, [branchId, sub, period, branches])
 
   async function renameBranch() {
-    if (!branchId || !renameValue.trim()) return
+    if (typeof branchId !== 'number' || !renameValue.trim()) return
     setBusy(true)
     try {
       await api.patch(`/admin/branches/${branchId}`, { name: renameValue.trim() })
@@ -123,6 +185,7 @@ export default function OwnerPanelPage() {
     return String(item.name || '').toLowerCase().includes(q) || String(item.sku || '').toLowerCase().includes(q)
   })
   const lowStockCount = items.filter((row) => row.is_low).length
+  const totalCapex = assets.reduce((sum, a) => sum + Number(a.cost || 0), 0)
 
   return (
     <div className="space-y-4">
@@ -132,14 +195,14 @@ export default function OwnerPanelPage() {
         <span className="text-sm font-medium text-slate-600">Branch:</span>
         <ToggleGroup
           className="flex-wrap"
-          options={branches.map((b) => ({ value: String(b.id), label: b.name }))}
+          options={[{ value: 'all', label: 'All Branches' }, ...branches.map((b) => ({ value: String(b.id), label: b.name }))]}
           value={String(branchId ?? '')}
-          onChange={(v) => setBranchId(Number(v))}
+          onChange={(v) => setBranchId(v === 'all' ? 'all' : Number(v))}
         />
         <button
           type="button"
           className="btn btn-secondary btn-sm shrink-0 ml-auto"
-          disabled={!branchId}
+          disabled={typeof branchId !== 'number'}
           onClick={() => { setRenameValue(branches.find((b) => b.id === branchId)?.name || ''); setRenameOpen(true) }}
         >
           Rename
@@ -205,6 +268,99 @@ export default function OwnerPanelPage() {
                 />
                 <StatCard label="Outstanding (Unpaid)" value={formatMoney(analytics.outstanding)} />
               </div>
+
+              <div className="card space-y-3">
+                <h3 className="font-semibold">{period === 'day' ? 'Hourly Collection' : 'Daily Collection'}</h3>
+                {(analytics.trend || []).length === 0 ? (
+                  <p className="text-sm text-slate-500">No collection data for this period</p>
+                ) : (
+                  (() => {
+                    const trend = analytics.trend || []
+                    const max = Math.max(...trend.map((t: any) => Number(t.amount)), 1)
+                    const dense = trend.length > 14
+                    return (
+                      <div className="overflow-x-auto">
+                        <div
+                          className="flex items-end gap-2 h-56 pt-6 pb-8 px-1 relative"
+                          style={{ minWidth: dense ? `${trend.length * 28}px` : '100%' }}
+                        >
+                          {trend.map((t: any) => {
+                            const amount = Number(t.amount)
+                            const pct = Math.max((amount / max) * 100, amount > 0 ? 3 : 0)
+                            return (
+                              <div key={t.label} className="group relative flex flex-col items-center justify-end h-full flex-1 min-w-[18px]">
+                                <div className="pointer-events-none absolute -top-1 -translate-y-full opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-medium text-slate-700 whitespace-nowrap bg-white border border-slate-200 rounded px-1.5 py-0.5 shadow-sm z-10">
+                                  {formatMoney(amount)}
+                                </div>
+                                <div
+                                  className="w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-[var(--brand-600)] to-[var(--brand-200)] group-hover:from-[var(--brand-700)] group-hover:to-[var(--brand-500)] transition-colors"
+                                  style={{ height: `${pct}%` }}
+                                />
+                                <div
+                                  className="mt-2 text-[10px] text-slate-500 whitespace-nowrap"
+                                  style={dense ? { writingMode: 'vertical-rl', transform: 'rotate(180deg)', maxHeight: '3.5rem' } : undefined}
+                                >
+                                  {t.label}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })()
+                )}
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <StatCard label="Capital Assets (Equipment)" value={formatMoney(totalCapex)} tone="danger" />
+                <StatCard
+                  label="Net after equipment investment"
+                  value={formatMoney(analytics.net - totalCapex)}
+                  tone={analytics.net - totalCapex >= 0 ? 'success' : 'danger'}
+                />
+              </div>
+
+              <div className="card space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-semibold">Capital Assets — lab/X-ray machines, other big one-time equipment</h3>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm whitespace-nowrap"
+                    disabled={typeof branchId !== 'number'}
+                    onClick={() => setAssetModalOpen(true)}
+                  >
+                    + Add Asset
+                  </button>
+                </div>
+                {branchId === 'all' && <p className="text-xs text-slate-500">Select a specific branch to add a new asset — showing the combined total here.</p>}
+                <DataTable
+                  rows={assets}
+                  columns={[
+                    { key: 'name', label: 'Name', render: (r: any) => <span className="font-medium">{r.name}</span> },
+                    { key: 'category', label: 'Category', render: (r: any) => r.category || '—' },
+                    { key: 'date', label: 'Purchased', render: (r: any) => formatDate(r.purchased_on) },
+                    { key: 'cost', label: 'Cost', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(r.cost)}</span> },
+                    { key: 'act', label: '', render: (r: any) => (
+                      <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => void removeAsset(r.id)}>Remove</button>
+                    ) },
+                  ]}
+                  emptyText="No capital assets recorded yet"
+                />
+              </div>
+
+              {assetModalOpen && (
+                <Modal title="Add Capital Asset" onClose={() => setAssetModalOpen(false)}>
+                  <div className="space-y-3">
+                    <input className="input" placeholder="Name (e.g. X-ray Machine)" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} />
+                    <input className="input" placeholder="Category (e.g. Lab Equipment)" value={assetForm.category} onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })} />
+                    <input className="input" type="number" placeholder="Cost (MMK)" value={assetForm.cost} onChange={(e) => setAssetForm({ ...assetForm, cost: e.target.value })} />
+                    <input className="input" type="date" value={assetForm.purchased_on} onChange={(e) => setAssetForm({ ...assetForm, purchased_on: e.target.value })} />
+                    <input className="input" placeholder="Notes (optional)" value={assetForm.notes} onChange={(e) => setAssetForm({ ...assetForm, notes: e.target.value })} />
+                    <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={addAsset}>Save Asset</button>
+                  </div>
+                </Modal>
+              )}
 
               <div className="grid lg:grid-cols-2 gap-4">
                 <div className="card">

@@ -36,6 +36,7 @@ from app.schemas.counter import (
 from app.services.counter_service import (
     apply_stock_count,
     cashier_analytics,
+    cashier_analytics_combined,
     cashier_analytics_range,
     convert_patient_type,
     create_doctor,
@@ -1252,7 +1253,7 @@ def counter_update_service(
         raise HTTPException(400, str(e)) from e
 
 
-def _resolve_analytics(db: Session, branch_id: int, period: str, date_from: str | None, date_to: str | None) -> dict:
+def _resolve_analytics(db: Session, branch_id: int | None, period: str, date_from: str | None, date_to: str | None) -> dict:
     if date_from and date_to:
         try:
             start = datetime.fromisoformat(date_from)
@@ -1261,27 +1262,34 @@ def _resolve_analytics(db: Session, branch_id: int, period: str, date_from: str 
             raise HTTPException(400, "date_from/date_to must be YYYY-MM-DD") from e
         if end < start:
             raise HTTPException(400, "date_to must be on or after date_from")
+        if branch_id is None:
+            return cashier_analytics_combined(db, date_from=date_from, date_to=date_to)
         return cashier_analytics_range(db, branch_id, start, end)
     if period not in {"day", "month", "3m", "year"}:
         raise HTTPException(400, "period must be day, month, 3m, or year")
+    if branch_id is None:
+        return cashier_analytics_combined(db, period)
     return cashier_analytics(db, branch_id, period)
 
 
 @router.get("/analytics")
 def counter_analytics(
-    branch_id: int,
+    branch_id: int | None = None,
     period: str = "month",
     date_from: str | None = None,
     date_to: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require("pos", "billing", "accounts", "analytics", "reports")),
 ):
+    # branch_id omitted/None = "All Branches" combined view (Owner Panel only —
+    # every other caller of this endpoint, e.g. Cashier's own Analyze tab,
+    # always passes its own branch_id).
     return _resolve_analytics(db, branch_id, period, date_from, date_to)
 
 
 @router.get("/analytics/export")
 def counter_analytics_export(
-    branch_id: int,
+    branch_id: int | None = None,
     period: str = "month",
     date_from: str | None = None,
     date_to: str | None = None,

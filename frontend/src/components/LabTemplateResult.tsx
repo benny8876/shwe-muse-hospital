@@ -5,9 +5,11 @@ import letterhead from '../assets/letterhead.png'
 
 // Colors sampled from the hospital's official A4 lab report templates —
 // match them exactly rather than the app's blue brand color, since this is
-// the printed/patient-facing document, not app chrome.
-const LAB_HEADER_BG = '#14532d'
-const LAB_SECTION_BG = '#dcebdc'
+// the printed/patient-facing document, not app chrome. Exported so other
+// printed reports (e.g. ResultSlip's X-ray/USG layout) can match the same
+// branding instead of duplicating these hex values.
+export const LAB_HEADER_BG = '#14532d'
+export const LAB_SECTION_BG = '#dcebdc'
 
 export type LabResultValues = Record<string, string | string[] | { col1: string; col2: string } | undefined>
 
@@ -500,9 +502,17 @@ export default function LabTemplateResult({ template, values, onChange, patientN
       )}
 
       {/* A4 print layout — always rendered when readOnly (visible on screen too), otherwise print-only.
-          flex-col + min-h-[297mm] so the confidentiality note (mt-auto) is pinned to the bottom of
-          the page rather than sitting right under the signature. */}
-      <div className={`${readOnly ? '' : 'print-only print-flex hidden'} p-8 flex flex-col min-h-[297mm]`}>
+          No forced page-height box here any more: an earlier version used flex-col + min-h-[273mm] +
+          mt-auto to push the confidentiality note to the bottom of a single page, but that requires
+          the box's rendered height to match the printable area to the sub-millimeter — any rounding
+          from borders/line-height nudges it a fraction of a mm over, which is enough for the browser
+          to spill onto a second, near-blank page. The note is now a separate `.print-footer` element
+          (position: fixed in print — see index.css) so it repeats at the bottom of every printed page
+          regardless of how many pages the report actually takes, instead of trying to pin it once. */}
+      {/* print:pb-16 reserves clear space at the bottom of every page for the fixed `.print-footer`
+          below, which doesn't take up flow space of its own — without this, a report long enough to
+          nearly fill a page could have its last line of content print underneath the footer text. */}
+      <div className={`${readOnly ? '' : 'print-only hidden'} p-8 print:pb-16`}>
         <img src={letterhead} alt="Shwe Muse Hospital" className="w-full mb-4" />
         <div className="grid grid-cols-2 gap-1 text-sm border-t border-b py-2 mb-3">
           <div>{template.patientLabel || "Patient's Name"}: <strong>{patientName}</strong></div>
@@ -633,13 +643,16 @@ export default function LabTemplateResult({ template, values, onChange, patientN
             </div>
           </>
         ) : (
-          <div className="flex justify-end mt-10 text-sm">
+          <div className="flex justify-between mt-10 text-sm">
+            <div>_____________________<br />Referring Doctor</div>
             <div>_____________________<br />Consultant Pathologist</div>
           </div>
         )}
-        <div className="text-center text-xs font-medium text-slate-600 mt-auto pt-8">
-          ဓာတ်ခွဲခန်းအဖြေများကိုသက်ဆိုင်ရာဆရာဝန်များနှင့်သာမေးမြန်းဆွေးနွေးပါရန်
-        </div>
+      </div>
+      {/* Repeats on every printed page via `.print-footer` (position: fixed, see index.css) — a running
+          footer, not content pinned once, so it stays correct no matter how many pages the report takes. */}
+      <div className={`${readOnly ? 'mt-8' : 'print-only print-footer hidden'} text-center text-xs font-medium text-slate-600 pt-2`}>
+        ဓာတ်ခွဲခန်းအဖြေများကိုသက်ဆိုင်ရာဆရာဝန်များနှင့်သာမေးမြန်းဆွေးနွေးပါရန်
       </div>
     </>
   )

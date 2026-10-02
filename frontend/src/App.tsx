@@ -11,6 +11,7 @@ import AdminWardsPage from './modules/admin/AdminWardsPage'
 import OwnerPanelPage from './modules/admin/OwnerPanelPage'
 import DeveloperAccountsPage from './modules/developer/DeveloperAccountsPage'
 import ReceptionCounterPage from './modules/counters/ReceptionCounterPage'
+import AppointmentCounterPage from './modules/counters/AppointmentCounterPage'
 import PatientRecordsPage from './modules/counters/PatientRecordsPage'
 import PharmacyCounterPage from './modules/counters/PharmacyCounterPage'
 import XrayCounterPage from './modules/counters/XrayCounterPage'
@@ -28,14 +29,27 @@ function Private({ children }: { children: React.ReactNode }) {
 }
 
 const ADMIN_ROLES = ['super_admin', 'hospital_admin']
+// branch_admin only ever reaches /admin/staff (scoped to its own branch, enforced
+// server-side in app/api/v1/admin.py) — never /admin/owner, which stays owner-only.
+const STAFF_ADMIN_ROLES = [...ADMIN_ROLES, 'branch_admin']
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const { session } = useAuth()
   if (!session) return <Navigate to="/login" replace />
-  const hasAdminAccess = ADMIN_ROLES.includes(session.role)
+  const hasAdminAccess = STAFF_ADMIN_ROLES.includes(session.role)
     || session.allowed_counters?.includes('admin')
     || session.allowed_features?.some((f) => f.startsWith('admin.'))
   if (!hasAdminAccess) return <Navigate to="/counter" replace />
+  return children
+}
+
+function OwnerOnly({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth()
+  if (!session) return <Navigate to="/login" replace />
+  const hasOwnerAccess = ADMIN_ROLES.includes(session.role)
+    || session.allowed_counters?.includes('admin')
+    || session.allowed_features?.some((f) => f.startsWith('admin.'))
+  if (!hasOwnerAccess) return <Navigate to="/admin/staff" replace />
   return children
 }
 
@@ -47,6 +61,7 @@ function DevOnly({ children }: { children: React.ReactNode }) {
 }
 
 const RECEPTION_ROLES = ['receptionist', 'super_admin', 'hospital_admin', 'casualty']
+const APPOINTMENT_ROLES = ['receptionist', 'super_admin', 'hospital_admin', 'casualty']
 const PATIENT_RECORDS_ROLES = ['receptionist', 'pharmacist', 'nurse', 'lab_tech', 'radiology', 'usg', 'super_admin', 'hospital_admin', 'casualty']
 const PHARMACY_ROLES = ['pharmacist', 'super_admin', 'hospital_admin']
 const XRAY_ROLES = ['radiology', 'super_admin', 'hospital_admin', 'ot_staff']
@@ -56,6 +71,7 @@ const NURSE_ROLES = ['nurse', 'super_admin', 'hospital_admin']
 const IPD_ROLES = ['nurse', 'super_admin', 'hospital_admin']
 const STORE_ROLES = ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin']
 const CASHIER_ROLES = ['cashier', 'super_admin', 'hospital_admin', 'executive', 'accountant', 'hr']
+const WARD_MANAGEMENT_ROLES = ['super_admin', 'hospital_admin']
 
 export default function App() {
   return (
@@ -67,6 +83,14 @@ export default function App() {
           element={(
             <CounterGuard counter="reception" roles={RECEPTION_ROLES}>
               <ReceptionCounterPage />
+            </CounterGuard>
+          )}
+        />
+        <Route
+          path="appointments"
+          element={(
+            <CounterGuard counter="appointments" roles={APPOINTMENT_ROLES}>
+              <AppointmentCounterPage />
             </CounterGuard>
           )}
         />
@@ -142,6 +166,14 @@ export default function App() {
             </CounterGuard>
           )}
         />
+        <Route
+          path="ward-management"
+          element={(
+            <CounterGuard counter="ward-management" roles={WARD_MANAGEMENT_ROLES}>
+              <AdminWardsPage />
+            </CounterGuard>
+          )}
+        />
         <Route index element={<DashboardPage />} />
       </Route>
       <Route path="/dev" element={<DevOnly><DevLayout /></DevOnly>}>
@@ -150,8 +182,7 @@ export default function App() {
       </Route>
       <Route path="/admin" element={<AdminOnly><AdminLayout /></AdminOnly>}>
         <Route path="staff" element={<AdminStaffPage />} />
-        <Route path="wards" element={<AdminWardsPage />} />
-        <Route path="owner" element={<OwnerPanelPage />} />
+        <Route path="owner" element={<OwnerOnly><OwnerPanelPage /></OwnerOnly>} />
         <Route index element={<Navigate to="/admin/staff" replace />} />
       </Route>
       <Route path="/app/*" element={<Navigate to="/counter/reception" replace />} />

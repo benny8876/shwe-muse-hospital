@@ -66,3 +66,42 @@ class PettyCash(Base):
     branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"))
     balance: Mapped[float] = mapped_column(Float, default=0)
     last_topup: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CapitalAsset(Base):
+    """A one-time, big-ticket equipment purchase (lab/X-ray machine, etc.) —
+    deliberately separate from Expense, which is day-to-day operating spend.
+    No depreciation schedule here on purpose (v1): Owner Panel just subtracts
+    the lifetime total from net revenue for an "after equipment investment"
+    figure, which is enough for an owner-level dashboard without turning this
+    into full fixed-asset accounting."""
+
+    __tablename__ = "capital_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    category: Mapped[str] = mapped_column(String(60), default="")
+    cost: Mapped[float] = mapped_column(Float, default=0)
+    purchased_on: Mapped[date] = mapped_column(Date, server_default=func.current_date())
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SyncSnapshot(Base):
+    """Latest rollup pushed from one branch's offline server — see
+    scripts/push_sync.py and POST /sync/push. The cloud Admin Panel instance
+    reads the latest snapshot per branch_code instead of trying to merge two
+    branches' live Invoice/Payment tables (which would need to reconcile two
+    separate primary-key spaces for no real benefit, since the owner only
+    ever needs the rolled-up numbers, not line-level drill-down, from here)."""
+
+    __tablename__ = "sync_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    branch_code: Mapped[str] = mapped_column(String(20), index=True)
+    period_label: Mapped[str] = mapped_column(String(40), default="")
+    date_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payload: Mapped[str] = mapped_column(Text, default="")
+    received_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

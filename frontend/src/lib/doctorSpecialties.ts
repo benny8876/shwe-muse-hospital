@@ -41,8 +41,10 @@ export function doctorsInSpecialty<T extends DoctorLike>(doctors: T[], specialty
   return doctors.filter((d) => normalizeSpecialty(d.specialty) === want)
 }
 
-export function doctorOptionLabel(d: { full_name: string; specialty?: string | null; consultation_fee?: number }): string {
+// Fee is deliberately left out — Reception (the only caller) shouldn't show
+// a doctor's consultation fee to the registering staff/patient; billing still
+// applies it under the hood when the OPD/IPD consultation line is created.
+export function doctorOptionLabel(d: { full_name: string; specialty?: string | null }): string {
   const sp = normalizeSpecialty(d.specialty)
-  const fee = d.consultation_fee != null && d.consultation_fee > 0 ? ` · ${Math.round(d.consultation_fee).toLocaleString()} MMK` : ''
-  return `${d.full_name} (${sp})${fee}`
+  return `${d.full_name} (${sp})`
 }

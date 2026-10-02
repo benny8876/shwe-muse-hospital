@@ -83,6 +83,12 @@ class Payment(Base):
     amount: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String(8), default="MMK")
     fx_rate: Mapped[float] = mapped_column(Float, default=1)
+    # Only meaningful when method == "refund" — which wallet the money was actually
+    # paid back out of (cash/kpay/wave). A refund's own `method` column is always
+    # the literal string "refund" (so the payment history can tell it apart from a
+    # collection), so without this the Z-report's cash reconciliation could not
+    # tell a cash refund from a KPay/Wave one.
+    refund_method: Mapped[str] = mapped_column(String(20), default="")
     received_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     notes: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

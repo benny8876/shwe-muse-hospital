@@ -1,16 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import api, { getApiError } from '../../lib/api'
 import { useToast } from '../../lib/toast'
+import { useAuth } from '../../lib/auth'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
 import Modal from '../../components/Modal'
 
 const ROLES = [
-  'hospital_admin', 'executive', 'cashier', 'receptionist',
+  'hospital_admin', 'branch_admin', 'executive', 'cashier', 'receptionist',
   'doctor', 'nurse', 'pharmacist', 'lab_tech', 'radiology', 'usg',
   'ot_staff', 'casualty', 'warehouse', 'accountant', 'hr',
 ]
+
+// branch_admin can only create/edit staff in its own branch and can never
+// grant an admin-tier role — mirrors the server-side check in
+// app/api/v1/admin.py's ADMIN_TIER_ROLES, which rejects this regardless.
+const ADMIN_TIER_ROLES = ['super_admin', 'hospital_admin', 'branch_admin']
 
 type Staff = {
   id: number
@@ -30,6 +36,12 @@ const emptyForm = { username: '', password: '', full_name: '', role: 'nurse', br
 
 export default function AdminStaffPage() {
   const toast = useToast()
+  const { session } = useAuth()
+  const isBranchAdmin = session?.role === 'branch_admin'
+  const creatableRoles = useMemo(
+    () => (isBranchAdmin ? ROLES.filter((r) => !ADMIN_TIER_ROLES.includes(r)) : ROLES),
+    [isBranchAdmin],
+  )
   const [staff, setStaff] = useState<Staff[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
   const [query, setQuery] = useState('')
@@ -151,12 +163,16 @@ export default function AdminStaffPage() {
           <input className="input" type="password" placeholder="Password * (min 8, upper/lower/digit/symbol)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
           <input className="input" placeholder="Full name *" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
           <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            {creatableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select className="input" value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })}>
-            <option value="">No branch</option>
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          {isBranchAdmin ? (
+            <div className="input bg-slate-50 text-slate-500">{branches.find((b) => b.id === session?.branch_id)?.name || 'My Branch'}</div>
+          ) : (
+            <select className="input" value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })}>
+              <option value="">No branch</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           <input className="input" placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <input className="input" placeholder="Employee code" value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
           <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={addStaff}>Create Account</button>
@@ -178,13 +194,17 @@ export default function AdminStaffPage() {
                 </span>
               ) },
               { key: 'act', label: '', render: (r) => (
-                <div className="flex gap-1 flex-wrap">
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditStaff(r)}>Edit</button>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setResetTarget(r); setNewPassword('') }}>Reset PW</button>
-                  {!['super_admin', 'hospital_admin'].includes(r.role) && (
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
-                  )}
-                </div>
+                isBranchAdmin && ADMIN_TIER_ROLES.includes(r.role) ? (
+                  <span className="text-xs text-slate-400">—</span>
+                ) : (
+                  <div className="flex gap-1 flex-wrap">
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditStaff(r)}>Edit</button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setResetTarget(r); setNewPassword('') }}>Reset PW</button>
+                    {!['super_admin', 'hospital_admin'].includes(r.role) && (
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
+                    )}
+                  </div>
+                )
               ) },
             ]}
             emptyText="No staff accounts"
@@ -196,12 +216,16 @@ export default function AdminStaffPage() {
         <Modal title={`Edit — ${editStaff.username}`} onClose={() => setEditStaff(null)}>
           <input className="input" value={editStaff.full_name} onChange={(e) => setEditStaff({ ...editStaff, full_name: e.target.value })} />
           <select className="input" value={editStaff.role} onChange={(e) => setEditStaff({ ...editStaff, role: e.target.value })}>
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            {creatableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select className="input" value={editStaff.branch_id ?? ''} onChange={(e) => setEditStaff({ ...editStaff, branch_id: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">No branch</option>
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          {isBranchAdmin ? (
+            <div className="input bg-slate-50 text-slate-500">{branches.find((b) => b.id === editStaff.branch_id)?.name || 'My Branch'}</div>
+          ) : (
+            <select className="input" value={editStaff.branch_id ?? ''} onChange={(e) => setEditStaff({ ...editStaff, branch_id: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">No branch</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           <input className="input" placeholder="Phone" value={editStaff.phone} onChange={(e) => setEditStaff({ ...editStaff, phone: e.target.value })} />
           <input className="input" placeholder="Employee code" value={editStaff.employee_code} onChange={(e) => setEditStaff({ ...editStaff, employee_code: e.target.value })} />
           <div className="flex gap-2">

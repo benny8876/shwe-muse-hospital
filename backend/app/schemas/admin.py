@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -77,6 +77,28 @@ class WardCreateIn(BaseModel):
     name: str
     category: str = "general"
     floor: str = ""
+
+
+class CapitalAssetCreateIn(BaseModel):
+    branch_id: int
+    name: str
+    category: str = ""
+    cost: float
+    purchased_on: date | None = None
+    notes: str = ""
+
+
+class CapitalAssetOut(BaseModel):
+    id: int
+    branch_id: int
+    name: str
+    category: str
+    cost: float
+    purchased_on: date
+    notes: str
+
+    class Config:
+        from_attributes = True
 
 
 class WardUpdateIn(BaseModel):

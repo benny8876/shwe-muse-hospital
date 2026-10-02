@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import api, { getApiError } from '../../lib/api'
 import { useToast } from '../../lib/toast'
@@ -12,21 +12,13 @@ import ToggleGroup from '../../components/ToggleGroup'
 import RegistrationLabel from '../../components/RegistrationLabel'
 import Modal from '../../components/Modal'
 import Alert from '../../components/Alert'
+import Field from '../../components/Field'
 import { formatAge, formatDate, formatMoney } from '../../lib/format'
 import {
   doctorOptionLabel,
   doctorsInSpecialty,
   specialtyOptionsForDoctors,
 } from '../../lib/doctorSpecialties'
-
-function Field({ label, className = '', children }: { label: string; className?: string; children: ReactNode }) {
-  return (
-    <label className={`block ${className}`.trim()}>
-      <span className="text-xs font-medium text-slate-600">{label}</span>
-      <div className="mt-1">{children}</div>
-    </label>
-  )
-}
 
 type Doctor = { id: number; full_name: string; consultation_fee: number; specialty?: string }
 type Ward = { id: number; name: string; category: string }
@@ -66,17 +58,6 @@ export default function ReceptionCounterPage() {
   const [convertBusy, setConvertBusy] = useState(false)
 
   const [ipdActive, setIpdActive] = useState<any[]>([])
-
-  const [appointments, setAppointments] = useState<any[]>([])
-  const [apDoctorFilter, setApDoctorFilter] = useState('')
-  const [apStatusFilter, setApStatusFilter] = useState('')
-  const [apPatientId, setApPatientId] = useState('')
-  const [apDoctorSpecialty, setApDoctorSpecialty] = useState('General Medicine')
-  const [apDoctorId, setApDoctorId] = useState('')
-  const [apScheduledAt, setApScheduledAt] = useState('')
-  const [apDuration, setApDuration] = useState('15')
-  const [apNotes, setApNotes] = useState('')
-  const [apBusy, setApBusy] = useState(false)
 
   const [depositPick, setDepositPick] = useState<any | null>(null)
   const [extraDepositAmount, setExtraDepositAmount] = useState('')
@@ -182,80 +163,6 @@ export default function ReceptionCounterPage() {
     }
   }, [tab, branchId, toast])
 
-  const apDoctorSpecialtyOptions = specialtyOptionsForDoctors(doctors)
-  const apDoctorsForSpecialty = doctorsInSpecialty(doctors, apDoctorSpecialty)
-
-  useEffect(() => {
-    if (doctors.length === 0) return
-    if (doctorsInSpecialty(doctors, apDoctorSpecialty).length === 0 && apDoctorSpecialtyOptions[0]) {
-      setApDoctorSpecialty(apDoctorSpecialtyOptions[0])
-    }
-  }, [doctors]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadAppointments = useCallback(async () => {
-    try {
-      const params: Record<string, unknown> = { branch_id: branchId }
-      if (apDoctorFilter) params.doctor_id = apDoctorFilter
-      if (apStatusFilter) params.status = apStatusFilter
-      const { data } = await api.get('/appointments', { params })
-      setAppointments(data)
-    } catch (e) {
-      toast.error(getApiError(e))
-    }
-  }, [branchId, apDoctorFilter, apStatusFilter, toast])
-
-  useEffect(() => {
-    if (tab === 'appointments') void loadAppointments()
-  }, [tab, loadAppointments])
-
-  async function bookAppointment() {
-    if (!apPatientId) return toast.error('လူနာ ရွေးပါ')
-    if (!apDoctorId) return toast.error('ဆရာဝန် ရွေးပါ')
-    if (!apScheduledAt) return toast.error('ရက်စွဲ/အချိန် ထည့်ပါ')
-    setApBusy(true)
-    try {
-      await api.post('/appointments', {
-        patient_id: Number(apPatientId),
-        doctor_id: Number(apDoctorId),
-        branch_id: branchId,
-        scheduled_at: apScheduledAt,
-        duration_minutes: Number(apDuration) || 15,
-        notes: apNotes,
-      })
-      toast.success('Appointment booked')
-      setApPatientId('')
-      setApScheduledAt('')
-      setApNotes('')
-      await loadAppointments()
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setApBusy(false)
-    }
-  }
-
-  async function updateAppointmentStatus(id: number, status: string) {
-    setApBusy(true)
-    try {
-      await api.patch(`/appointments/${id}`, { status })
-      toast.success(`Appointment ${status}`)
-      await loadAppointments()
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setApBusy(false)
-    }
-  }
-
-  // "Arrived" patient → jump to Register tab with them pre-selected, so the
-  // receptionist only has to confirm details and start the OPD bill.
-  function registerFromAppointment(ap: any) {
-    setPatientType('opd')
-    setMode('existing')
-    setPatientId(String(ap.patient_id))
-    setTab('register')
-  }
-
   async function submitExtraDeposit() {
     if (!depositPick?.admission_id) return toast.error('IPD လူနာ ရွေးပါ')
     const amt = Number(extraDepositAmount)
@@ -356,7 +263,6 @@ export default function ReceptionCounterPage() {
     <div>
       <Tabs tabs={[
         { id: 'register', label: 'Register' },
-        { id: 'appointments', label: 'Appointments' },
         { id: 'ipd-deposit', label: 'IPD Deposit' },
         { id: 'convert', label: 'Convert OPD ⇄ IPD' },
         { id: 'history', label: 'Bill History' },
@@ -518,87 +424,6 @@ export default function ReceptionCounterPage() {
           )}
         </div>
       </div>
-      )}
-
-      {tab === 'appointments' && (
-        <div className="grid lg:grid-cols-[1fr_2fr] gap-4 items-start">
-          <div className="card space-y-3">
-            <h3 className="font-semibold text-slate-800">Book Appointment</h3>
-            <Field label="Patient">
-              <PatientSelect className="input" value={apPatientId} onChange={setApPatientId} />
-            </Field>
-            <Field label="Clinic / Department">
-              <select className="input" value={apDoctorSpecialty} onChange={(e) => { setApDoctorSpecialty(e.target.value); setApDoctorId('') }}>
-                {apDoctorSpecialtyOptions.map((sp) => (
-                  <option key={sp} value={sp}>{sp}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Doctor">
-              <select className="input" value={apDoctorId} onChange={(e) => setApDoctorId(e.target.value)}>
-                <option value="">Select doctor...</option>
-                {apDoctorsForSpecialty.map((d) => (
-                  <option key={d.id} value={d.id}>{doctorOptionLabel(d)}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Date & Time">
-              <input className="input" type="datetime-local" value={apScheduledAt} onChange={(e) => setApScheduledAt(e.target.value)} />
-            </Field>
-            <Field label="Duration (minutes)">
-              <input className="input" type="number" min={5} step={5} value={apDuration} onChange={(e) => setApDuration(e.target.value)} />
-            </Field>
-            <Field label="Notes (optional)">
-              <input className="input" value={apNotes} onChange={(e) => setApNotes(e.target.value)} />
-            </Field>
-            <button type="button" disabled={apBusy} className="btn btn-primary w-full" onClick={bookAppointment}>Book Appointment</button>
-          </div>
-
-          <div className="card space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-semibold text-slate-800">Appointments</h3>
-              <div className="flex gap-2">
-                <select className="input w-44" value={apDoctorFilter} onChange={(e) => setApDoctorFilter(e.target.value)}>
-                  <option value="">All doctors</option>
-                  {doctors.map((d) => (
-                    <option key={d.id} value={d.id}>{d.full_name}</option>
-                  ))}
-                </select>
-                <select className="input w-36" value={apStatusFilter} onChange={(e) => setApStatusFilter(e.target.value)}>
-                  <option value="">All statuses</option>
-                  <option value="booked">Booked</option>
-                  <option value="arrived">Arrived</option>
-                  <option value="done">Done</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </div>
-            </div>
-            <DataTable
-              rows={appointments}
-              columns={[
-                { key: 'time', label: 'Time', render: (r) => formatDate(String(r.scheduled_at)) },
-                { key: 'patient', label: 'Patient', render: (r) => `${patientName(r.patient_id)} (${patientUhid(r.patient_id)})` },
-                { key: 'doctor', label: 'Doctor', render: (r) => doctors.find((d) => d.id === r.doctor_id)?.full_name || `#${r.doctor_id}` },
-                { key: 'status', label: 'Status', render: (r) => <StatusBadge value={String(r.status)} /> },
-                { key: 'notes', label: 'Notes', render: (r) => <span className="text-slate-600">{r.notes || '—'}</span> },
-                { key: 'act', label: '', render: (r) => (
-                  <div className="flex gap-1">
-                    {r.status === 'booked' && (
-                      <button type="button" disabled={apBusy} className="btn btn-secondary btn-sm" onClick={() => updateAppointmentStatus(r.id, 'arrived')}>Arrived</button>
-                    )}
-                    {r.status === 'arrived' && (
-                      <button type="button" disabled={apBusy} className="btn btn-primary btn-sm" onClick={() => registerFromAppointment(r)}>Register OPD</button>
-                    )}
-                    {(r.status === 'booked' || r.status === 'arrived') && (
-                      <button type="button" disabled={apBusy} className="text-xs text-red-600 hover:underline" onClick={() => updateAppointmentStatus(r.id, 'cancelled')}>Cancel</button>
-                    )}
-                  </div>
-                ) },
-              ]}
-              emptyText="No appointments found"
-            />
-          </div>
-        </div>
       )}
 
       {tab === 'ipd-deposit' && (

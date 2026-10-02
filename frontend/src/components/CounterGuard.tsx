@@ -5,6 +5,7 @@ import Alert from './Alert'
 
 const COUNTER_LOGINS: Record<string, { users: string[]; title: string; titleMm: string }> = {
   reception: { users: ['receptionist'], title: 'Reception counter', titleMm: 'Reception ကောင်တာ' },
+  appointments: { users: ['receptionist'], title: 'Appointments', titleMm: 'Appointment ချိန်းဆို' },
   'patient-records': { users: ['receptionist', 'pharmacy', 'nurse'], title: 'Patient Records', titleMm: 'လူနာ မှတ်တမ်း' },
   pharmacy: { users: ['pharmacy'], title: 'Pharmacy counter', titleMm: 'ဆေးခန်း ကောင်တာ' },
   lab: { users: ['lab'], title: 'Lab counter', titleMm: 'ဓာတ်ခွဲခန်း ကောင်တာ' },
@@ -14,6 +15,7 @@ const COUNTER_LOGINS: Record<string, { users: string[]; title: string; titleMm: 
   ipd: { users: ['nurse'], title: 'IPD Beds', titleMm: 'IPD အိပ်ရာ စခန်း' },
   store: { users: ['warehouse', 'cashier', 'pharmacy'], title: 'Stock Management', titleMm: 'ကုန်ပစ္စည်းစီမံခန့်ခွဲမှု' },
   cashier: { users: ['cashier'], title: 'Cashier counter', titleMm: 'Cashier ကောင်တာ' },
+  'ward-management': { users: ['admin'], title: 'Ward & Bed Management', titleMm: 'Ward & Bed စီမံခန့်ခွဲမှု' },
 }
 
 type Props = {

@@ -63,6 +63,34 @@ def current_shift(db: Session = Depends(get_db), user: User = Depends(require("p
     return db.query(CashierShift).filter(CashierShift.user_id == user.id, CashierShift.status == "open").first()
 
 
+@router.get("/shifts")
+def list_shifts(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require("shifts", "pos"))):
+    # Across every cashier at this branch, not just the caller's own — a 24-hour
+    # branch hands the till between several cashier logins per day, and the
+    # whole point of this list is letting any of them (or a manager) review a
+    # previous shift's handover, not just their own.
+    shifts = (
+        db.query(CashierShift)
+        .options(joinedload(CashierShift.user))
+        .filter(CashierShift.branch_id == branch_id)
+        .order_by(CashierShift.opened_at.desc())
+        .limit(200)
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "user_name": s.user.full_name if s.user else "",
+            "opened_at": s.opened_at,
+            "closed_at": s.closed_at,
+            "opening_float": s.opening_float,
+            "closing_cash": s.closing_cash,
+            "status": s.status,
+        }
+        for s in shifts
+    ]
+
+
 @router.get("/shifts/{shift_id}/z-report")
 def z_report(shift_id: int, db: Session = Depends(get_db), _: User = Depends(require("shifts", "pos"))):
     # Based on Payment rows (which /invoices/{id}/pay, /pay-multi and /refund
@@ -74,13 +102,23 @@ def z_report(shift_id: int, db: Session = Depends(get_db), _: User = Depends(req
     from app.models.accounting import Expense
     from app.models.billing import Payment
 
+    shift = db.get(CashierShift, shift_id)
     payments = db.query(Payment).filter(Payment.shift_id == shift_id).all()
     collected = sum(p.amount for p in payments if p.method != "refund")
     refunded = sum(p.amount for p in payments if p.method == "refund")
     invoice_count = len({p.invoice_id for p in payments})
-    expense_total = float(
-        db.query(func.coalesce(func.sum(Expense.amount), 0.0)).filter(Expense.shift_id == shift_id).scalar() or 0
-    )
+    expenses = db.query(Expense).filter(Expense.shift_id == shift_id).all()
+    expense_total = sum(e.amount for e in expenses)
+
+    # Cash-drawer reconciliation: only payments/refunds/expenses that actually moved
+    # physical cash affect it — a KPay/Wave collection or expense never touches the
+    # till, so folding it in here would make "expected cash" wrong on day one.
+    cash_in = sum(p.amount for p in payments if p.method == "cash")
+    cash_out_refunds = sum(p.amount for p in payments if p.method == "refund" and p.refund_method == "cash")
+    cash_out_expenses = sum(e.amount for e in expenses if e.paid_from == "cash")
+    expected_closing_cash = (shift.opening_float if shift else 0) + cash_in - cash_out_refunds - cash_out_expenses
+    cash_discrepancy = (shift.closing_cash - expected_closing_cash) if shift and shift.status == "closed" else None
+
     return {
         "shift_id": shift_id,
         "invoice_count": invoice_count,
@@ -88,6 +126,8 @@ def z_report(shift_id: int, db: Session = Depends(get_db), _: User = Depends(req
         "refunded": refunded,
         "net_collected": collected - refunded,
         "expense_total": expense_total,
+        "expected_closing_cash": expected_closing_cash,
+        "cash_discrepancy": cash_discrepancy,
     }
 
 

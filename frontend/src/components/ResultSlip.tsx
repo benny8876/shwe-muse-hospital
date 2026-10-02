@@ -1,5 +1,6 @@
 import { formatDate } from '../lib/format'
 import letterhead from '../assets/letterhead.png'
+import { LAB_SECTION_BG } from './LabTemplateResult'
 
 type Props = {
   title: string
@@ -45,21 +46,17 @@ export default function ResultSlip({
       </div>
       <div className={`${readOnly ? '' : 'print-only hidden'} p-8`}>
         <img src={letterhead} alt="Shwe Muse Hospital" className="w-full mb-4" />
-        <div className="text-center text-lg font-bold mb-3 uppercase">
+        <div className="grid grid-cols-2 gap-1 text-sm border-t border-b py-2 mb-3">
+          <div>Patient's Name: <strong>{patientName}</strong></div>
+          <div>Received Date: <strong>{date ? formatDate(date) : formatDate(new Date().toISOString())}</strong></div>
+          <div>Age & Gender: <strong>{(age || age === 0) ? age : '—'} / {gender || '—'}</strong></div>
+          <div>Reported Date: <strong>{formatDate(new Date().toISOString())}</strong></div>
+          <div>ID: <strong>{uhid}</strong></div>
+          {doctorName && <div>Referred by (Dr.): <strong>{doctorName}</strong></div>}
+        </div>
+        <div className="text-center text-lg font-bold py-1 mb-3 uppercase" style={{ background: LAB_SECTION_BG }}>
           {title}{examType?.trim() ? ` (${examType.trim().toUpperCase()})` : ''}
         </div>
-        <table className="w-full text-sm border-collapse mb-3">
-          <tbody>
-            <tr>
-              <td className="border border-slate-400 px-2 py-1 w-1/2">NAME: <strong>{patientName}</strong> (ID: {uhid})</td>
-              <td className="border border-slate-400 px-2 py-1">AGE/SEX: <strong>{(age || age === 0) ? age : '—'} / {gender || '—'}</strong></td>
-            </tr>
-            <tr>
-              <td className="border border-slate-400 px-2 py-1">REFERRING PHYSICIAN: <strong>{doctorName || '—'}</strong></td>
-              <td className="border border-slate-400 px-2 py-1">DATE: <strong>{date ? formatDate(date) : formatDate(new Date().toISOString())}</strong></td>
-            </tr>
-          </tbody>
-        </table>
         <div className="text-sm font-medium text-slate-600 mb-1">{bodyLabel}</div>
         {bodyIsHtml ? (
           <div

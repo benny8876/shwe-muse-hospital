@@ -1,5 +1,6 @@
 import type { ComponentType, SVGProps } from 'react'
 import {
+  IconAppointment,
   IconCashier,
   IconIpd,
   IconLab,
@@ -9,6 +10,7 @@ import {
   IconReception,
   IconStore,
   IconUsg,
+  IconWard,
   IconXray,
 } from '../components/icons/CounterIcons'
 
@@ -25,6 +27,7 @@ export type CounterLink = {
 
 export const COUNTER_LINKS: CounterLink[] = [
   { key: 'reception', to: '/counter/reception', label: 'counterReception', icon: IconReception, roles: ['receptionist', 'super_admin', 'hospital_admin', 'casualty'], subtitle: 'Register OPD or admit IPD patient' },
+  { key: 'appointments', to: '/counter/appointments', label: 'counterAppointments', icon: IconAppointment, roles: ['receptionist', 'super_admin', 'hospital_admin', 'casualty'], subtitle: 'Book and manage doctor appointments' },
   { key: 'patient-records', to: '/counter/patient-records', label: 'counterPatientRecords', icon: IconPatientRecords, roles: ['receptionist', 'pharmacist', 'nurse', 'lab_tech', 'radiology', 'usg', 'super_admin', 'hospital_admin', 'casualty'], subtitle: 'Search patient visit & treatment history' },
   { key: 'pharmacy', to: '/counter/pharmacy', label: 'counterPharmacy', icon: IconPharmacy, roles: ['pharmacist', 'super_admin', 'hospital_admin'], subtitle: 'Dispense medicine & ward orders' },
   { key: 'lab', to: '/counter/lab', label: 'counterLab', icon: IconLab, roles: ['lab_tech', 'super_admin', 'hospital_admin'], subtitle: 'Order test, enter result, print report' },
@@ -34,6 +37,7 @@ export const COUNTER_LINKS: CounterLink[] = [
   { key: 'ipd', to: '/counter/ipd', label: 'counterIpd', icon: IconIpd, roles: ['nurse', 'super_admin', 'hospital_admin'], subtitle: 'Ward/bed grid — see who is in each bed and running bill' },
   { key: 'store', to: '/counter/store', label: 'counterStore', icon: IconStore, roles: ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin'], subtitle: 'Stock by department — Pharmacy, Lab, X-ray, USG' },
   { key: 'cashier', to: '/counter/cashier', label: 'counterCashier', icon: IconCashier, roles: ['cashier', 'super_admin', 'hospital_admin', 'executive', 'accountant', 'hr'], subtitle: 'Collect payment & expenses' },
+  { key: 'ward-management', to: '/counter/ward-management', label: 'counterWardManagement', icon: IconWard, roles: ['super_admin', 'hospital_admin'], subtitle: 'Create wards, set bed rates (daily/hourly/package)' },
 ]
 
 export function visibleCounters(role: string, allowedCounters?: string[] | null) {

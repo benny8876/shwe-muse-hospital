@@ -2,6 +2,7 @@
 ROLES = [
     "super_admin",
     "hospital_admin",
+    "branch_admin",
     "executive",
     "cashier",
     "receptionist",
@@ -22,6 +23,9 @@ ROLES = [
 PERMS = {
     "super_admin": ["*"],
     "hospital_admin": ["*"],
+    # Scoped to their own branch's Staff Accounts only — enforced explicitly in
+    # app/api/v1/admin.py's staff endpoints, not via this generic perm list.
+    "branch_admin": [],
     "executive": ["analytics", "reports", "kpi"],
     "cashier": ["pos", "billing", "patients.read", "shifts", "accounts", "inventory", "inventory.read"],
     "receptionist": ["patients", "appointments", "queue", "front_desk", "billing.create", "patients.read"],
@@ -41,6 +45,7 @@ PERMS = {
 HOME_BY_ROLE = {
     "super_admin": "/counter/cashier",
     "hospital_admin": "/counter/cashier",
+    "branch_admin": "/admin/staff",
     "executive": "/counter/cashier",
     "cashier": "/counter/cashier",
     "receptionist": "/counter/reception",

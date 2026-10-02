@@ -9,6 +9,7 @@ import StatusBadge from '../../components/StatusBadge'
 import Modal from '../../components/Modal'
 import Alert from '../../components/Alert'
 import ToggleGroup from '../../components/ToggleGroup'
+import Accordion from '../../components/Accordion'
 import StatCard from '../../components/StatCard'
 import { formatMoney, formatDate } from '../../lib/format'
 import { announceCall } from '../../lib/voiceAnnounce'
@@ -32,10 +33,16 @@ export default function CashierCounterPage() {
   const [addItemResults, setAddItemResults] = useState<any[]>([])
   const [addItemWarehouses, setAddItemWarehouses] = useState<any[]>([])
   const [addItemWarehouseId, setAddItemWarehouseId] = useState('')
-  const [addItemQty, setAddItemQty] = useState('1')
+  // Staged-then-confirm cart (same shape as Pharmacy's own Sale tab cart) — lets
+  // the cashier search and stage several medicines/tests before submitting them
+  // all in one go, instead of one search-click-cycle per item.
+  const [addItemCart, setAddItemCart] = useState<{ item: any; qty: number }[]>([])
   const [splits, setSplits] = useState<{ method: string; amount: number }[]>([])
   const [petty, setPetty] = useState<any>(null)
-  const [expForm, setExpForm] = useState({ category: '', amount: '', notes: '' })
+  const [expForm, setExpForm] = useState({ name: '', category: '', amount: '', notes: '', paidFrom: 'cash' })
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false)
+  const [addItemModalOpen, setAddItemModalOpen] = useState(false)
+  const [expenseCategoryOptions, setExpenseCategoryOptions] = useState<string[]>([])
   const [expenseRows, setExpenseRows] = useState<any[]>([])
   const [expenseTotal, setExpenseTotal] = useState(0)
   const [expenseFrom, setExpenseFrom] = useState('')
@@ -46,9 +53,10 @@ export default function CashierCounterPage() {
   const [historyStatus, setHistoryStatus] = useState('all')
   const [historyDetail, setHistoryDetail] = useState<any>(null)
   const [activityRows, setActivityRows] = useState<any[]>([])
-  const [historySub, setHistorySub] = useState<'bills' | 'activity'>('bills')
+  const [historySub, setHistorySub] = useState<'bills' | 'activity' | 'shifts'>('bills')
+  const [shiftHistoryRows, setShiftHistoryRows] = useState<any[]>([])
   const [analyticsPeriod, setAnalyticsPeriod] = useState<'day' | 'month' | '3m' | 'year' | 'custom'>('day')
-  const [analyticsSub, setAnalyticsSub] = useState<'overview' | 'breakdown' | 'expenses' | 'trend'>('overview')
+  const [analyticsSub, setAnalyticsSub] = useState<'overview' | 'breakdown' | 'expenses'>('overview')
   const [analytics, setAnalytics] = useState<any>(null)
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
@@ -57,9 +65,9 @@ export default function CashierCounterPage() {
     full_name: '',
     consultation_fee: '',
     specialty: 'General Medicine',
-    specialtyCustom: '',
   })
   const [editDoctor, setEditDoctor] = useState<any>(null)
+  const [doctorModalOpen, setDoctorModalOpen] = useState(false)
   const [serviceDept, setServiceDept] = useState<'lab' | 'xray' | 'usg'>('lab')
   const [serviceItems, setServiceItems] = useState<any[]>([])
   const [serviceForm, setServiceForm] = useState({ name: '', price: '' })
@@ -72,6 +80,7 @@ export default function CashierCounterPage() {
   const [openingFloat, setOpeningFloat] = useState('')
   const [closeShiftOpen, setCloseShiftOpen] = useState(false)
   const [closingCash, setClosingCash] = useState('')
+  const [closingPreview, setClosingPreview] = useState<any>(null)
   const [zReport, setZReport] = useState<any>(null)
 
   const PAY_METHODS = ['cash', 'kpay', 'wave'] as const
@@ -101,6 +110,15 @@ export default function CashierCounterPage() {
   async function loadPetty() {
     const { data } = await api.get('/accounts/petty-cash', { params: { branch_id: branchId } })
     setPetty(data)
+  }
+
+  // Previously-used expense categories, offered as a <datalist> so the cashier
+  // can re-pick one from past entries (e.g. "Utilities", "Tea break") instead
+  // of re-typing it and risking a slightly different spelling each time —
+  // the category field still stays free text for a genuinely new category.
+  async function loadExpenseCategories() {
+    const { data } = await api.get('/accounts/expenses/categories', { params: { branch_id: branchId } })
+    setExpenseCategoryOptions(data)
   }
 
   async function loadExpenseHistory() {
@@ -144,6 +162,16 @@ export default function CashierCounterPage() {
     setActivityRows(data)
   }
 
+  async function loadShiftHistory() {
+    const { data } = await api.get('/shifts', { params: { branch_id: branchId } })
+    setShiftHistoryRows(data)
+  }
+
+  async function viewShiftZReport(shiftId: number) {
+    const { data } = await api.get(`/shifts/${shiftId}/z-report`)
+    setZReport(data)
+  }
+
   async function loadAnalytics(period = analyticsPeriod) {
     if (period === 'custom' && (!customFrom || !customTo)) return
     setBusy(true)
@@ -167,25 +195,18 @@ export default function CashierCounterPage() {
     setDoctors(data)
   }
 
-  function resolveDoctorSpecialty(specialty: string, custom: string) {
-    if (specialty === 'Other') return custom.trim() || 'Other'
-    return normalizeSpecialty(specialty)
-  }
-
   async function addDoctor() {
     if (!doctorForm.full_name.trim()) return toast.error('Doctor name required')
-    if (doctorForm.specialty === 'Other' && !doctorForm.specialtyCustom.trim()) {
-      return toast.error('Enter department name for Other')
-    }
     setBusy(true)
     try {
       await api.post('/counter/doctors', {
         full_name: doctorForm.full_name.trim(),
         consultation_fee: Number(doctorForm.consultation_fee) || 0,
-        specialty: resolveDoctorSpecialty(doctorForm.specialty, doctorForm.specialtyCustom),
+        specialty: normalizeSpecialty(doctorForm.specialty),
       }, { params: { branch_id: branchId } })
       toast.success('Doctor added')
-      setDoctorForm({ full_name: '', consultation_fee: '', specialty: 'General Medicine', specialtyCustom: '' })
+      setDoctorForm({ full_name: '', consultation_fee: '', specialty: 'General Medicine' })
+      setDoctorModalOpen(false)
       await loadDoctors()
     } catch (e) {
       toast.error(getApiError(e))
@@ -250,15 +271,12 @@ export default function CashierCounterPage() {
 
   async function saveDoctorEdit() {
     if (!editDoctor) return
-    if (editDoctor.specialty === 'Other' && !editDoctor.specialtyCustom?.trim()) {
-      return toast.error('Enter department name for Other')
-    }
     setBusy(true)
     try {
       await api.patch(`/counter/doctors/${editDoctor.id}`, {
         full_name: editDoctor.full_name,
         consultation_fee: Number(editDoctor.consultation_fee),
-        specialty: resolveDoctorSpecialty(editDoctor.specialty, editDoctor.specialtyCustom || ''),
+        specialty: normalizeSpecialty(editDoctor.specialty),
       })
       toast.success('Doctor updated')
       setEditDoctor(null)
@@ -292,10 +310,11 @@ export default function CashierCounterPage() {
         }).catch((e) => toast.error(getApiError(e)))
       }
     }
-    if (tab === 'expenses') { void loadPetty(); void loadExpenseHistory() }
+    if (tab === 'expenses') { void loadPetty(); void loadExpenseHistory(); void loadExpenseCategories() }
     if (tab === 'history') {
       void loadHistory()
       void loadActivity()
+      void loadShiftHistory()
     }
     if (tab === 'analytics') void loadAnalytics()
     if (tab === 'doctors') void loadDoctors()
@@ -320,15 +339,15 @@ export default function CashierCounterPage() {
     api.get('/shifts/current').then((r) => setShift(r.data)).catch(() => {})
   }, [])
 
-  async function editLinePrice(lineId: number, unitPrice: number) {
+  async function editLine(lineId: number, patch: { unit_price?: number; qty?: number }) {
     if (!selected) return
     setBusy(true)
     try {
-      await api.patch(`/invoices/${selected.id}/lines/${lineId}`, { unit_price: unitPrice })
+      await api.patch(`/invoices/${selected.id}/lines/${lineId}`, patch)
       const { data } = await api.get(`/invoices/${selected.id}`)
       setSelected(data)
       setSplitAmount(Number(data.balance))
-      toast.success('Price updated')
+      toast.success(patch.qty != null ? 'Quantity updated' : 'Price updated')
       await loadBills()
     } catch (e) {
       toast.error(getApiError(e))
@@ -433,38 +452,64 @@ export default function CashierCounterPage() {
     }
   }
 
+  // Stages an item into the cart (merging qty if it's already staged) rather than
+  // calling the API immediately — lets the cashier keep searching and adding more
+  // medicines from the same or a new search before submitting them all at once.
+  function addItemToCart(item: any) {
+    setAddItemCart((cur) => {
+      const idx = cur.findIndex((c) => c.item.id === item.id)
+      if (idx >= 0) {
+        const next = [...cur]
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1 }
+        return next
+      }
+      return [...cur, { item, qty: 1 }]
+    })
+  }
+
+  function setCartItemQty(itemId: number, qty: number) {
+    setAddItemCart((cur) => cur.map((c) => (c.item.id === itemId ? { ...c, qty } : c)))
+  }
+
+  function removeCartItem(itemId: number) {
+    setAddItemCart((cur) => cur.filter((c) => c.item.id !== itemId))
+  }
+
   // Stock-tracked (drug) items go through the same dispense path Pharmacy's
   // own Sale tab uses (needs a warehouse so stock actually decrements);
   // everything else is a plain invoice line — see the backend guard on
-  // POST /invoices/{id}/lines that rejects is_stock items outright.
-  async function addCatalogItem(inv: any, item: any, onUpdated: (data: any) => void) {
-    if (!inv) return
-    const qty = Number(addItemQty) || 1
-    if (item.is_stock && !addItemWarehouseId) return toast.error('Select a warehouse first')
+  // POST /invoices/{id}/lines that rejects is_stock items outright. Lines are
+  // submitted one request per cart line (there's no batch endpoint), same as
+  // Pharmacy's "Confirm & Dispense" — a mid-cart failure here leaves the
+  // not-yet-added lines staged for retry instead of silently dropping them.
+  async function confirmAddItems(inv: any, onUpdated: (data: any) => void) {
+    if (!inv || addItemCart.length === 0) return
+    if (addItemCart.some((c) => c.item.is_stock) && !addItemWarehouseId) return toast.error('Select a warehouse first')
     setBusy(true)
     try {
-      if (item.is_stock) {
-        const { data } = await api.post(`/invoices/${inv.id}/lines/pharmacy`, {
-          item_id: item.id,
-          warehouse_id: Number(addItemWarehouseId),
-          qty,
-        })
-        onUpdated(data)
-      } else {
-        await api.post(`/invoices/${inv.id}/lines`, {
-          item_id: item.id,
-          qty,
-          unit_price: item.price,
-          source: item.category || 'other',
-          description: item.name,
-        })
-        const { data } = await api.get(`/invoices/${inv.id}`)
-        onUpdated(data)
+      for (const { item, qty } of addItemCart) {
+        if (item.is_stock) {
+          await api.post(`/invoices/${inv.id}/lines/pharmacy`, {
+            item_id: item.id,
+            warehouse_id: Number(addItemWarehouseId),
+            qty,
+          })
+        } else {
+          await api.post(`/invoices/${inv.id}/lines`, {
+            item_id: item.id,
+            qty,
+            unit_price: item.price,
+            source: item.category || 'other',
+            description: item.name,
+          })
+        }
+        setAddItemCart((cur) => cur.filter((c) => c.item.id !== item.id))
       }
-      toast.success(`${item.name} added`)
+      const { data } = await api.get(`/invoices/${inv.id}`)
+      onUpdated(data)
+      toast.success('Items added')
       setAddItemQuery('')
       setAddItemResults([])
-      setAddItemQty('1')
       await loadBills()
     } catch (e) {
       toast.error(getApiError(e))
@@ -548,19 +593,21 @@ export default function CashierCounterPage() {
   }
 
   async function addExpense() {
-    if (!expForm.category || !expForm.amount) return toast.error('Fill category and amount')
+    if (!expForm.name || !expForm.category || !expForm.amount) return toast.error('Fill name, category, and amount')
     setBusy(true)
     try {
       await api.post('/accounts/expenses', {
         branch_id: branchId,
+        name: expForm.name,
         category: expForm.category,
         amount: Number(expForm.amount),
-        paid_from: 'petty',
+        paid_from: expForm.paidFrom,
         notes: expForm.notes,
       })
       toast.success('Expense recorded')
-      setExpForm({ category: '', amount: '', notes: '' })
-      await Promise.all([loadPetty(), loadExpenseHistory()])
+      setExpForm({ name: '', category: '', amount: '', notes: '', paidFrom: 'cash' })
+      setExpenseModalOpen(false)
+      await Promise.all([loadPetty(), loadExpenseHistory(), loadExpenseCategories()])
     } catch (e) {
       toast.error(getApiError(e))
     } finally {
@@ -586,6 +633,20 @@ export default function CashierCounterPage() {
     }
   }
 
+  // Fetches the would-be Z-report for the still-open shift before the cashier
+  // actually closes it, so "Expected cash in drawer" can guide their physical
+  // count instead of only being revealed as a verdict after the fact.
+  async function openCloseShiftModal() {
+    setCloseShiftOpen(true)
+    if (!shift) return
+    try {
+      const { data } = await api.get(`/shifts/${shift.id}/z-report`)
+      setClosingPreview(data)
+    } catch (e) {
+      toast.error(getApiError(e))
+    }
+  }
+
   async function closeShift() {
     if (!shift) return
     setShiftBusy(true)
@@ -595,6 +656,7 @@ export default function CashierCounterPage() {
       setZReport(data)
       setShift(null)
       setClosingCash('')
+      setClosingPreview(null)
       setCloseShiftOpen(false)
       toast.success('Shift closed')
     } catch (e) {
@@ -622,7 +684,7 @@ export default function CashierCounterPage() {
               <span className="font-semibold text-slate-800">Shift #{shift.id} open</span>
               <span className="text-slate-500"> · Opening float {formatMoney(shift.opening_float)} · since {formatDate(shift.opened_at)}</span>
             </div>
-            <button type="button" disabled={shiftBusy} className="btn btn-secondary btn-sm" onClick={() => setCloseShiftOpen(true)}>Close Shift</button>
+            <button type="button" disabled={shiftBusy} className="btn btn-secondary btn-sm" onClick={() => void openCloseShiftModal()}>Close Shift</button>
           </>
         ) : (
           <>
@@ -636,12 +698,23 @@ export default function CashierCounterPage() {
       </div>
 
       {closeShiftOpen && (
-        <Modal title="Close Shift" onClose={() => setCloseShiftOpen(false)}>
+        <Modal title="Close Shift" onClose={() => { setCloseShiftOpen(false); setClosingPreview(null) }}>
           <p className="text-xs text-slate-500">Cash drawer ထဲက ရှိတဲ့ငွေကို ရေတွက်ပြီး ဖြည့်ပါ</p>
+          {closingPreview && (
+            <div className="text-sm bg-slate-50 rounded-lg p-2 mb-2">
+              Expected cash in drawer: <strong>{formatMoney(closingPreview.expected_closing_cash)}</strong>
+              <div className="text-xs text-slate-500 mt-0.5">Opening float + cash collected − cash refunds − cash expenses</div>
+              {/* This is a calculated estimate from what the system has recorded, not an
+                  audit result — a cash movement that never got entered into the system
+                  (an unlogged expense, a manual adjustment) will throw it off. The
+                  physical count below is always the real number. */}
+              <div className="text-xs text-amber-700 mt-1">⚠ ဒါက system ထဲ မှတ်ထားတဲ့ transaction အပေါ်မူတည်ပြီး ခန့်မှန်းထားတာပါ — ရေတွက်ထားတဲ့ ပိုက်ဆံအစစ်ကိုပဲ ယုံကြည်ပြီး အောက်မှာ ထည့်ပါ</div>
+            </div>
+          )}
           <input className="input" type="number" placeholder="Closing cash count" value={closingCash} onChange={(e) => setClosingCash(e.target.value)} />
           <div className="flex gap-2">
             <button type="button" disabled={shiftBusy} className="btn btn-primary flex-1" onClick={closeShift}>Close & Z-Report</button>
-            <button type="button" className="btn btn-secondary flex-1" onClick={() => setCloseShiftOpen(false)}>Cancel</button>
+            <button type="button" className="btn btn-secondary flex-1" onClick={() => { setCloseShiftOpen(false); setClosingPreview(null) }}>Cancel</button>
           </div>
         </Modal>
       )}
@@ -656,6 +729,23 @@ export default function CashierCounterPage() {
             )}
             <div className="flex justify-between font-semibold border-t border-slate-200 pt-2"><span>Net collected</span><span>{formatMoney(zReport.net_collected)}</span></div>
             <div className="flex justify-between"><span>Expenses this shift</span><span className="font-medium">{formatMoney(zReport.expense_total)}</span></div>
+            <div className="flex justify-between border-t border-slate-200 pt-2"><span>Expected cash in drawer</span><span className="font-medium">{formatMoney(zReport.expected_closing_cash)}</span></div>
+            {zReport.cash_discrepancy != null && (
+              <>
+                <div className={`flex justify-between font-semibold ${Math.abs(zReport.cash_discrepancy) < 1 ? 'text-green-700' : 'text-amber-700'}`}>
+                  <span>Cash difference</span>
+                  <span>{zReport.cash_discrepancy > 0 ? '+' : ''}{formatMoney(zReport.cash_discrepancy)}</span>
+                </div>
+                {Math.abs(zReport.cash_discrepancy) >= 1 && (
+                  // Framed as something to double-check, not a verdict that the
+                  // physical count was wrong — "Expected" is only as good as what
+                  // got recorded in the system (see the note in Close Shift).
+                  <div className="text-xs text-amber-700">
+                    ကွာနေပါတယ် — ဒီ shift ရဲ့ Expense History/Activity Log ကို အရင်စစ်ကြည့်ပါ (cash expense တစ်ခုခု system ထဲ မမှတ်မိလို့ ဖြစ်နိုင်ပါတယ်)
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <button type="button" className="btn btn-secondary w-full" onClick={() => setZReport(null)}>Close</button>
         </Modal>
@@ -709,7 +799,11 @@ export default function CashierCounterPage() {
           <div className="card space-y-3">
             {selected ? (
               <>
-                <h3 className="font-semibold">{selected.number}</h3>
+                <div className="flex items-center justify-between gap-3 no-print">
+                  <h3 className="font-semibold">{selected.number}</h3>
+                  <button type="button" className="btn btn-secondary btn-sm whitespace-nowrap" onClick={() => setAddItemModalOpen(true)}>+ Add Medicine</button>
+                </div>
+                <h3 className="font-semibold hidden print:block">{selected.number}</h3>
                 <div className="max-h-80 overflow-auto border rounded-lg no-print">
                   <div className="grid grid-cols-[1fr_3rem_8rem_6.5rem_1.75rem] gap-3 items-center text-xs font-medium text-slate-500 bg-slate-50 px-3 py-2 sticky top-0">
                     <span>Item</span>
@@ -725,14 +819,24 @@ export default function CashierCounterPage() {
                           {l.description}
                           {l.source === 'opd' && <span className="ml-1 text-xs text-[var(--brand-600)] whitespace-nowrap">(Doctor fee)</span>}
                         </span>
-                        <span className="text-center text-slate-600">{Number(l.qty || 1)}</span>
+                        <input
+                          type="number"
+                          min={0.01}
+                          step="any"
+                          className="input !py-1.5 text-center no-spinner"
+                          defaultValue={Number(l.qty || 1)}
+                          onBlur={(e) => {
+                            const val = Number(e.target.value)
+                            if (!Number.isNaN(val) && val > 0 && val !== Number(l.qty)) void editLine(l.id, { qty: val })
+                          }}
+                        />
                         <input
                           type="number"
                           className="input !py-1.5 text-right"
                           defaultValue={l.unit_price}
                           onBlur={(e) => {
                             const val = Number(e.target.value)
-                            if (!Number.isNaN(val) && val !== l.unit_price) void editLinePrice(l.id, val)
+                            if (!Number.isNaN(val) && val !== l.unit_price) void editLine(l.id, { unit_price: val })
                           }}
                         />
                         <span className="text-right font-medium">{formatMoney(l.amount)}</span>
@@ -750,54 +854,10 @@ export default function CashierCounterPage() {
                   </div>
                 </div>
 
-                <div className="border-t pt-3 space-y-2 no-print">
-                  <div className="font-medium">Add Item</div>
-                  <div className="flex gap-2">
-                    <input
-                      className="input flex-1"
-                      placeholder="Search medicine / test / service name..."
-                      value={addItemQuery}
-                      onChange={(e) => setAddItemQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && searchAddItem()}
-                    />
-                    <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={searchAddItem}>Search</button>
-                  </div>
-                  {addItemResults.length > 0 && (
-                    <div className="border rounded-lg divide-y max-h-48 overflow-auto">
-                      {addItemResults.map((item: any) => (
-                        <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                          <span className="truncate">
-                            {item.name} <span className="text-slate-400">· {formatMoney(item.price)}{item.is_stock ? ' · stock' : ''}</span>
-                          </span>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            className="btn btn-primary btn-sm shrink-0"
-                            onClick={() => void addCatalogItem(selected, item, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}
-                          >
-                            + Add
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <select className="input" value={addItemWarehouseId} onChange={(e) => setAddItemWarehouseId(e.target.value)}>
-                      {addItemWarehouses.map((w: any) => (
-                        <option key={w.id} value={w.id}>{w.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      className="input w-24"
-                      type="number"
-                      placeholder="Qty"
-                      value={addItemQty}
-                      onChange={(e) => setAddItemQty(e.target.value)}
-                    />
-                  </div>
-                  <div className="text-xs text-slate-400">Warehouse only matters for medicine (stock) items — it's ignored for services/tests.</div>
-                </div>
-
+                {/* Total/Paid/Due first — the number a cashier needs on sight — then the
+                    primary action (Multi-Payment/Pay), with everything occasional
+                    (Add Item, Discount, Refund) tucked into collapsed accordions below
+                    instead of all six sections staying permanently expanded at once. */}
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div className="rounded-lg bg-slate-50 p-2">Total<br /><strong>{formatMoney(selected.total)}</strong></div>
                   <div className="rounded-lg bg-slate-50 p-2">Paid<br /><strong>{formatMoney(selected.paid)}</strong></div>
@@ -849,50 +909,6 @@ export default function CashierCounterPage() {
                 )}
 
                 <div className="border-t pt-3 space-y-2">
-                  <div className="font-medium">Discount</div>
-                  <div className="flex gap-2">
-                    <input
-                      className="input flex-1"
-                      type="number"
-                      placeholder="Discount amount"
-                      value={discountInput}
-                      onChange={(e) => setDiscountInput(e.target.value)}
-                    />
-                    <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={applyDiscount}>Apply</button>
-                  </div>
-                  {Number(selected.discount) > 0 && (
-                    <div className="text-sm text-slate-600">Current discount: <strong>{formatMoney(selected.discount)}</strong></div>
-                  )}
-                </div>
-
-                {Number(selected.paid) > 0.01 && (
-                  <div className="border-t pt-3 space-y-2">
-                    <div className="font-medium">Refund</div>
-                    <ToggleGroup
-                      options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
-                      value={refundMethod}
-                      onChange={setRefundMethod}
-                    />
-                    <div className="flex gap-2">
-                      <input
-                        className="input flex-1"
-                        type="number"
-                        placeholder={`Refund amount (max ${formatMoney(selected.paid)})`}
-                        value={refundAmount}
-                        onChange={(e) => setRefundAmount(e.target.value)}
-                      />
-                      <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={() => void submitRefund(selected, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}>Refund</button>
-                    </div>
-                    <input
-                      className="input"
-                      placeholder="Reason (optional)"
-                      value={refundReason}
-                      onChange={(e) => setRefundReason(e.target.value)}
-                    />
-                  </div>
-                )}
-
-                <div className="border-t pt-3 space-y-2">
                   <div className="font-medium">Multi-Payment</div>
                   <ToggleGroup
                     options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
@@ -932,6 +948,52 @@ export default function CashierCounterPage() {
                 <button type="button" disabled={busy} className="btn btn-primary w-full text-lg" onClick={confirmPayment}>
                   {splits.length > 0 ? `Pay ${formatMoney(splitTotal)}` : 'Pay Full Amount'}
                 </button>
+
+                <Accordion
+                  title="Discount"
+                  badge={Number(selected.discount) > 0 ? <span>{formatMoney(selected.discount)}</span> : undefined}
+                >
+                  <div className="flex gap-2">
+                    <input
+                      className="input flex-1"
+                      type="number"
+                      placeholder="Discount amount"
+                      value={discountInput}
+                      onChange={(e) => setDiscountInput(e.target.value)}
+                    />
+                    <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={applyDiscount}>Apply</button>
+                  </div>
+                  {Number(selected.discount) > 0 && (
+                    <div className="text-sm text-slate-600">Current discount: <strong>{formatMoney(selected.discount)}</strong></div>
+                  )}
+                </Accordion>
+
+                {Number(selected.paid) > 0.01 && (
+                  <Accordion title="Refund">
+                    <ToggleGroup
+                      options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
+                      value={refundMethod}
+                      onChange={setRefundMethod}
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        className="input flex-1"
+                        type="number"
+                        placeholder={`Refund amount (max ${formatMoney(selected.paid)})`}
+                        value={refundAmount}
+                        onChange={(e) => setRefundAmount(e.target.value)}
+                      />
+                      <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={() => void submitRefund(selected, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}>Refund</button>
+                    </div>
+                    <input
+                      className="input"
+                      placeholder="Reason (optional)"
+                      value={refundReason}
+                      onChange={(e) => setRefundReason(e.target.value)}
+                    />
+                  </Accordion>
+                )}
+
                 <button type="button" className="btn btn-secondary w-full" onClick={() => window.print()}>Print Receipt</button>
               </>
             ) : (
@@ -944,13 +1006,12 @@ export default function CashierCounterPage() {
       {tab === 'expenses' && (
         <div className="space-y-4">
           <div className="space-y-4">
-            <div className="card space-y-3">
-              <h3 className="font-semibold">Record Expense</h3>
-              {petty && <div className="text-sm">Petty cash balance: <strong>{formatMoney(petty.balance)}</strong></div>}
-              <input className="input" placeholder="Category (e.g. utilities)" value={expForm.category} onChange={(e) => setExpForm({ ...expForm, category: e.target.value })} />
-              <input className="input" type="number" placeholder="Amount" value={expForm.amount} onChange={(e) => setExpForm({ ...expForm, amount: e.target.value })} />
-              <input className="input" placeholder="Notes" value={expForm.notes} onChange={(e) => setExpForm({ ...expForm, notes: e.target.value })} />
-              <button type="button" disabled={busy} className="btn btn-primary" onClick={addExpense}>Save Expense</button>
+            <div className="card flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Record Expense</h3>
+                {petty && <div className="text-sm text-slate-600">Petty cash balance: <strong>{formatMoney(petty.balance)}</strong></div>}
+              </div>
+              <button type="button" className="btn btn-primary whitespace-nowrap" onClick={() => setExpenseModalOpen(true)}>+ Add Expense</button>
             </div>
 
             <div className="card space-y-3">
@@ -995,10 +1056,12 @@ export default function CashierCounterPage() {
               </div>
             </div>
             <DataTable
-              rows={expenseRows}
+              rows={expenseRows.map((r: any, i: number) => ({ ...r, _no: i + 1 }))}
               columns={[
+                { key: 'no', label: 'No.', render: (r: any) => <span className="text-slate-500">{r._no}</span> },
                 { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.expense_date)) },
-                { key: 'category', label: 'Category', render: (r: any) => <span className="font-medium">{String(r.category)}</span> },
+                { key: 'name', label: 'Name', render: (r: any) => <span className="font-medium">{r.name || '—'}</span> },
+                { key: 'category', label: 'Category', render: (r: any) => String(r.category) },
                 { key: 'paid_from', label: 'Paid From', render: (r: any) => <StatusBadge value={String(r.paid_from).toUpperCase()} /> },
                 { key: 'notes', label: 'Notes', render: (r: any) => <span className="text-slate-600">{r.notes || '—'}</span> },
                 { key: 'amount', label: 'Amount', className: 'text-right', render: (r: any) => <span className="font-semibold text-red-600">{formatMoney(Number(r.amount))}</span> },
@@ -1006,7 +1069,7 @@ export default function CashierCounterPage() {
               emptyText="No expenses recorded for this range"
               footer={(
                 <tr className="bg-slate-50 font-semibold border-t-2">
-                  <td className="px-3 py-2" colSpan={4}>Total ({expenseRows.length} record{expenseRows.length === 1 ? '' : 's'})</td>
+                  <td className="px-3 py-2" colSpan={6}>Total ({expenseRows.length} record{expenseRows.length === 1 ? '' : 's'})</td>
                   <td className="px-3 py-2 text-right text-red-700">{formatMoney(expenseTotal)}</td>
                 </tr>
               )}
@@ -1015,44 +1078,184 @@ export default function CashierCounterPage() {
         </div>
       )}
 
+      {addItemModalOpen && selected && (
+        <Modal
+          title={`Add Medicine — ${selected.number}`}
+          onClose={() => { setAddItemModalOpen(false); setAddItemCart([]); setAddItemQuery(''); setAddItemResults([]) }}
+        >
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                className="input flex-1"
+                placeholder="Search medicine / test / service name..."
+                value={addItemQuery}
+                onChange={(e) => setAddItemQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && searchAddItem()}
+              />
+              <button type="button" disabled={busy} className="btn btn-secondary whitespace-nowrap" onClick={searchAddItem}>Search</button>
+            </div>
+            {addItemResults.length > 0 && (
+              <div className="border rounded-lg divide-y max-h-48 overflow-auto">
+                {addItemResults.map((item: any) => (
+                  <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <span className="truncate">
+                      {item.name} <span className="text-slate-400">· {formatMoney(item.price)}{item.is_stock ? ' · stock' : ''}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm shrink-0"
+                      onClick={() => addItemToCart(item)}
+                    >
+                      + Add
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {addItemCart.length > 0 && (
+              <div className="border rounded-lg divide-y max-h-56 overflow-auto">
+                <div className="font-medium text-slate-500 bg-slate-50 px-3 py-2 sticky top-0 text-sm">Selected items ({addItemCart.length})</div>
+                {addItemCart.map(({ item, qty }) => (
+                  <div key={item.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <span className="flex-1 truncate">{item.name}</span>
+                    <input
+                      type="number"
+                      min={0.01}
+                      step="any"
+                      className="input !py-1 w-16 text-center no-spinner"
+                      value={qty}
+                      onChange={(e) => {
+                        const val = Number(e.target.value)
+                        if (!Number.isNaN(val) && val > 0) setCartItemQty(item.id, val)
+                      }}
+                    />
+                    <span className="w-20 text-right text-slate-600 shrink-0">{formatMoney(item.price * qty)}</span>
+                    <button type="button" className="text-slate-400 hover:text-red-600 text-lg leading-none shrink-0" onClick={() => removeCartItem(item.id)}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <select className="input" value={addItemWarehouseId} onChange={(e) => setAddItemWarehouseId(e.target.value)}>
+                {addItemWarehouses.map((w: any) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="text-xs text-slate-400">Warehouse only matters for medicine (stock) items — it's ignored for services/tests.</div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={busy || addItemCart.length === 0}
+                className="btn btn-primary flex-1"
+                onClick={() => void confirmAddItems(selected, (data) => { setSelected(data); setSplitAmount(Number(data.balance)) })}
+              >
+                Add {addItemCart.length > 0 ? `${addItemCart.length} ` : ''}item{addItemCart.length === 1 ? '' : 's'} to Bill
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setAddItemModalOpen(false); setAddItemCart([]); setAddItemQuery(''); setAddItemResults([]) }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {expenseModalOpen && (
+        <Modal title="Record Expense" onClose={() => setExpenseModalOpen(false)}>
+          <div className="space-y-3">
+            {petty && <div className="text-sm text-slate-600">Petty cash balance: <strong>{formatMoney(petty.balance)}</strong></div>}
+            <input className="input" placeholder="Name (e.g. March electricity bill)" value={expForm.name} onChange={(e) => setExpForm({ ...expForm, name: e.target.value })} />
+            <input
+              className="input"
+              list="expense-category-options"
+              placeholder="Category (e.g. utilities)"
+              value={expForm.category}
+              onChange={(e) => setExpForm({ ...expForm, category: e.target.value })}
+            />
+            <datalist id="expense-category-options">
+              {expenseCategoryOptions.map((c) => <option key={c} value={c} />)}
+            </datalist>
+            <input className="input" type="number" placeholder="Amount" value={expForm.amount} onChange={(e) => setExpForm({ ...expForm, amount: e.target.value })} />
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Paid from</div>
+              <ToggleGroup
+                options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
+                value={expForm.paidFrom}
+                onChange={(v) => setExpForm({ ...expForm, paidFrom: v })}
+              />
+              {/* Still a plain text field under the toggle — a payout that isn't cash/KPay/Wave
+                  (e.g. a bank transfer, or paid from the owner's own pocket) can be typed directly
+                  instead of being forced into one of the three quick-pick buttons. */}
+              <input
+                className="input mt-2"
+                placeholder="Or type another source manually (e.g. Bank transfer)"
+                value={expForm.paidFrom}
+                onChange={(e) => setExpForm({ ...expForm, paidFrom: e.target.value })}
+              />
+            </div>
+            <input className="input" placeholder="Notes" value={expForm.notes} onChange={(e) => setExpForm({ ...expForm, notes: e.target.value })} />
+            <div className="flex gap-2">
+              <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={addExpense}>Save Expense</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setExpenseModalOpen(false)}>Cancel</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {tab === 'doctors' && (
         <div className="space-y-4">
-          <div className="card space-y-3 max-w-md">
-            <h3 className="font-semibold">Add Doctor</h3>
-            <p className="text-xs text-slate-500">Reception counter မှာ ဆရာဝန် ရွေးချယ်နိုင်ပါမယ်</p>
-            <input
-              className="input"
-              placeholder="Doctor name * (e.g. Dr. Aung Kyaw)"
-              value={doctorForm.full_name}
-              onChange={(e) => setDoctorForm({ ...doctorForm, full_name: e.target.value })}
-            />
-            <input
-              className="input"
-              type="number"
-              placeholder="Consultation fee (MMK) *"
-              value={doctorForm.consultation_fee}
-              onChange={(e) => setDoctorForm({ ...doctorForm, consultation_fee: e.target.value })}
-            />
-            <select
-              className="input"
-              value={doctorForm.specialty}
-              onChange={(e) => setDoctorForm({ ...doctorForm, specialty: e.target.value })}
-            >
-              {DOCTOR_SPECIALTY_PRESETS.map((sp) => (
-                <option key={sp} value={sp}>{sp}</option>
-              ))}
-            </select>
-            {doctorForm.specialty === 'Other' && (
-              <input
-                className="input"
-                placeholder="Department name (e.g. Cardiology)"
-                value={doctorForm.specialtyCustom}
-                onChange={(e) => setDoctorForm({ ...doctorForm, specialtyCustom: e.target.value })}
-              />
-            )}
-            <p className="text-xs text-slate-500">Reception မှာ Clinic/Department ရွေးပြီး ဆရာဝန် ရွေးမယ်</p>
-            <button type="button" disabled={busy} className="btn btn-primary" onClick={addDoctor}>Save Doctor</button>
+          <div className="card flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">Add Doctor</h3>
+              <p className="text-xs text-slate-500">Reception counter မှာ ဆရာဝန် ရွေးချယ်နိုင်ပါမယ်</p>
+            </div>
+            <button type="button" className="btn btn-primary whitespace-nowrap" onClick={() => setDoctorModalOpen(true)}>+ Add Doctor</button>
           </div>
+
+          {/* Shared by both the Add and Edit Doctor modals below — rendered once here so
+              autocomplete still works whichever one happens to be open. */}
+          <datalist id="doctor-specialty-options">
+            {DOCTOR_SPECIALTY_PRESETS.filter((sp) => sp !== 'Other').map((sp) => <option key={sp} value={sp} />)}
+          </datalist>
+
+          {doctorModalOpen && (
+            <Modal title="Add Doctor" onClose={() => setDoctorModalOpen(false)}>
+              <div className="space-y-3">
+                <input
+                  className="input"
+                  placeholder="Doctor name * (e.g. Dr. Aung Kyaw)"
+                  value={doctorForm.full_name}
+                  onChange={(e) => setDoctorForm({ ...doctorForm, full_name: e.target.value })}
+                />
+                <input
+                  className="input"
+                  type="number"
+                  placeholder="Consultation fee (MMK) *"
+                  value={doctorForm.consultation_fee}
+                  onChange={(e) => setDoctorForm({ ...doctorForm, consultation_fee: e.target.value })}
+                />
+                <input
+                  className="input"
+                  list="doctor-specialty-options"
+                  placeholder="Clinic / Department (e.g. General Medicine)"
+                  value={doctorForm.specialty}
+                  onChange={(e) => setDoctorForm({ ...doctorForm, specialty: e.target.value })}
+                />
+                <p className="text-xs text-slate-500">Reception မှာ Clinic/Department ရွေးပြီး ဆရာဝန် ရွေးမယ်</p>
+                <div className="flex gap-2">
+                  <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={addDoctor}>Save Doctor</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setDoctorModalOpen(false)}>Cancel</button>
+                </div>
+              </div>
+            </Modal>
+          )}
 
           <div className="card">
             <h3 className="font-semibold mb-3">Doctor List & Fees</h3>
@@ -1072,14 +1275,11 @@ export default function CashierCounterPage() {
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={() => {
-                      const sp = String(r.specialty || 'General Medicine')
-                      const preset = DOCTOR_SPECIALTY_PRESETS.includes(sp as typeof DOCTOR_SPECIALTY_PRESETS[number])
                       setEditDoctor({
                         id: r.id,
                         full_name: r.name,
                         consultation_fee: r.fee,
-                        specialty: preset ? sp : 'Other',
-                        specialtyCustom: preset ? '' : sp,
+                        specialty: String(r.specialty || 'General Medicine'),
                       })
                     }}
                   >
@@ -1105,23 +1305,13 @@ export default function CashierCounterPage() {
                 value={editDoctor.consultation_fee}
                 onChange={(e) => setEditDoctor({ ...editDoctor, consultation_fee: e.target.value })}
               />
-              <select
+              <input
                 className="input"
+                list="doctor-specialty-options"
+                placeholder="Clinic / Department"
                 value={editDoctor.specialty || 'General Medicine'}
                 onChange={(e) => setEditDoctor({ ...editDoctor, specialty: e.target.value })}
-              >
-                {DOCTOR_SPECIALTY_PRESETS.map((sp) => (
-                  <option key={sp} value={sp}>{sp}</option>
-                ))}
-              </select>
-              {editDoctor.specialty === 'Other' && (
-                <input
-                  className="input"
-                  placeholder="Department name"
-                  value={editDoctor.specialtyCustom || ''}
-                  onChange={(e) => setEditDoctor({ ...editDoctor, specialtyCustom: e.target.value })}
-                />
-              )}
+              />
               <div className="flex gap-2">
                 <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={saveDoctorEdit}>Save</button>
                 <button type="button" className="btn btn-secondary flex-1" onClick={() => setEditDoctor(null)}>Cancel</button>
@@ -1262,7 +1452,6 @@ export default function CashierCounterPage() {
                   { id: 'overview', label: 'Overview' },
                   { id: 'breakdown', label: 'Breakdown' },
                   { id: 'expenses', label: `Expenses (${(analytics.expense_details || []).length})` },
-                  { id: 'trend', label: 'Trend' },
                 ]}
                 active={analyticsSub}
                 onChange={(t) => setAnalyticsSub(t as any)}
@@ -1282,7 +1471,11 @@ export default function CashierCounterPage() {
                     </>
                   }
                 />
-                <StatCard label="Today's Billing (ဒီနေ့တင်မှု)" value={formatMoney(Number(analytics.total_billed))} />
+                <StatCard
+                  label="Today's Billing (ဒီနေ့တင်မှု)"
+                  value={formatMoney(Number(analytics.total_billed))}
+                  hint={<div>ပေးချေမှု မသက်ဆိုင် — bill ဖွင့်ထားတဲ့ ပမာဏသာ</div>}
+                />
                 <StatCard label="Expenses" value={formatMoney(Number(analytics.total_expenses))} tone="danger" />
                 <StatCard label="Net" value={formatMoney(Number(analytics.net))} tone={analytics.net >= 0 ? 'success' : 'danger'} />
               </div>
@@ -1323,6 +1516,20 @@ export default function CashierCounterPage() {
                     <div key={p.method} className="flex justify-between text-sm border-b py-2">
                       <span className="font-medium">{p.method}</span>
                       <span>{formatMoney(Number(p.amount))}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="card space-y-3">
+                  <h3 className="font-semibold">OPD vs IPD</h3>
+                  {(analytics.by_invoice_kind || []).length === 0 && <p className="text-sm text-slate-500">No bills in this period</p>}
+                  {(analytics.by_invoice_kind || []).map((k: any) => (
+                    <div key={k.kind} className="flex justify-between text-sm border-b py-2 gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium">{k.label}</div>
+                        <div className="text-xs text-slate-500">{k.bills} bill{k.bills === 1 ? '' : 's'} · collected {formatMoney(Number(k.collected))}</div>
+                      </div>
+                      <span className="shrink-0 font-medium text-[var(--brand-600)]">{formatMoney(Number(k.billed))}</span>
                     </div>
                   ))}
                 </div>
@@ -1410,35 +1617,6 @@ export default function CashierCounterPage() {
                 )}
               </div>
               )}
-
-              {analyticsSub === 'trend' && (
-              <div className="card space-y-3">
-                <h3 className="font-semibold">
-                  {analyticsPeriod === 'day' ? 'Hourly Collection' : 'Daily Collection'}
-                </h3>
-                {(analytics.trend || []).length === 0 ? (
-                  <p className="text-sm text-slate-500">No collection data for this period</p>
-                ) : (
-                  <div className="space-y-2">
-                    {(() => {
-                      const max = Math.max(...(analytics.trend || []).map((t: any) => Number(t.amount)), 1)
-                      return (analytics.trend || []).map((t: any) => (
-                        <div key={t.label} className="flex items-center gap-3 text-sm">
-                          <div className="w-24 shrink-0 text-slate-600 truncate">{t.label}</div>
-                          <div className="flex-1 h-6 bg-slate-100 rounded overflow-hidden">
-                            <div
-                              className="h-full bg-[var(--brand-600)] rounded"
-                              style={{ width: `${Math.max((Number(t.amount) / max) * 100, Number(t.amount) > 0 ? 4 : 0)}%` }}
-                            />
-                          </div>
-                          <div className="w-28 text-right shrink-0">{formatMoney(Number(t.amount))}</div>
-                        </div>
-                      ))
-                    })()}
-                  </div>
-                )}
-              </div>
-              )}
             </>
           )}
         </div>
@@ -1449,6 +1627,7 @@ export default function CashierCounterPage() {
           <div className="flex flex-wrap gap-2">
             <button type="button" className={`btn ${historySub === 'bills' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setHistorySub('bills')}>Bill History</button>
             <button type="button" className={`btn ${historySub === 'activity' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setHistorySub('activity')}>Activity Log</button>
+            <button type="button" className={`btn ${historySub === 'shifts' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setHistorySub('shifts')}>Shift History</button>
           </div>
 
           {historySub === 'bills' && (
@@ -1528,8 +1707,7 @@ export default function CashierCounterPage() {
                       <span>{formatMoney(historyDetail.total)}</span>
                     </div>
                     {Number(historyDetail.paid) > 0.01 && (
-                      <div className="border-t pt-3 space-y-2 no-print">
-                        <div className="font-medium">Refund</div>
+                      <Accordion title="Refund" className="no-print">
                         <ToggleGroup
                           options={PAY_METHODS.map((m) => ({ value: m, label: payMethodLabel(m) }))}
                           value={refundMethod}
@@ -1551,7 +1729,7 @@ export default function CashierCounterPage() {
                           value={refundReason}
                           onChange={(e) => setRefundReason(e.target.value)}
                         />
-                      </div>
+                      </Accordion>
                     )}
                     <button type="button" className="btn btn-secondary w-full no-print" onClick={() => window.print()}>Print Receipt</button>
                   </>
@@ -1568,6 +1746,23 @@ export default function CashierCounterPage() {
                 { key: 'user', label: 'User', render: (r) => String(r.user_name) },
                 { key: 'detail', label: 'Detail', render: (r) => String(r.detail || r.entity) },
               ]} emptyText="No activity yet" />
+            </div>
+          )}
+
+          {historySub === 'shifts' && (
+            <div className="card">
+              <DataTable rows={shiftHistoryRows} columns={[
+                { key: 'id', label: 'Shift #', render: (r: any) => String(r.id) },
+                { key: 'user', label: 'Cashier', render: (r: any) => String(r.user_name || '—') },
+                { key: 'opened', label: 'Opened', render: (r: any) => formatDate(String(r.opened_at)) },
+                { key: 'closed', label: 'Closed', render: (r: any) => r.closed_at ? formatDate(String(r.closed_at)) : '—' },
+                { key: 'opening', label: 'Opening Float', className: 'text-right', render: (r: any) => formatMoney(Number(r.opening_float)) },
+                { key: 'closing', label: 'Closing Cash', className: 'text-right', render: (r: any) => r.closed_at ? formatMoney(Number(r.closing_cash)) : '—' },
+                { key: 'status', label: 'Status', render: (r: any) => <StatusBadge value={String(r.status).toUpperCase()} /> },
+                { key: 'act', label: '', render: (r: any) => (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => void viewShiftZReport(r.id)}>View Z-Report</button>
+                ) },
+              ]} emptyText="No shifts recorded yet" />
             </div>
           )}
         </div>

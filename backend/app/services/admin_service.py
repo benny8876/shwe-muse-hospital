@@ -1,17 +1,20 @@
+from datetime import date
+
 from sqlalchemy.orm import Session
 
 from app.core.rbac import ROLES
 from app.core.security import hash_password, password_ok
+from app.models.accounting import CapitalAsset
 from app.models.ipd import Bed, Ward
 from app.models.org import Branch
 from app.models.users import User
 from app.services.utils import audit
 
-WARD_CATEGORIES = ("general", "icu", "ccu", "vip", "private")
-
-
-def list_staff(db: Session) -> list[User]:
-    return db.query(User).order_by(User.role, User.full_name).all()
+def list_staff(db: Session, branch_id: int | None = None) -> list[User]:
+    q = db.query(User).order_by(User.role, User.full_name)
+    if branch_id is not None:
+        q = q.filter(User.branch_id == branch_id)
+    return q.all()
 
 
 def create_branch(db: Session, *, code: str, name: str, name_mm: str, address: str, phone: str, user_id: int | None) -> Branch:
@@ -147,10 +150,11 @@ def list_wards(db: Session, branch_id: int) -> list[Ward]:
 
 def create_ward(db: Session, *, branch_id: int, name: str, category: str, floor: str, user_id: int | None) -> Ward:
     name = name.strip()
+    category = category.strip().lower()
     if not name:
         raise ValueError("Ward name is required")
-    if category not in WARD_CATEGORIES:
-        raise ValueError(f"Invalid category: {category}")
+    if not category:
+        raise ValueError("Category is required")
     ward = Ward(branch_id=branch_id, name=name, category=category, floor=floor.strip())
     db.add(ward)
     db.flush()
@@ -167,8 +171,9 @@ def update_ward(db: Session, ward_id: int, *, name: str | None, category: str | 
             raise ValueError("Ward name is required")
         ward.name = name.strip()
     if category is not None:
-        if category not in WARD_CATEGORIES:
-            raise ValueError(f"Invalid category: {category}")
+        category = category.strip().lower()
+        if not category:
+            raise ValueError("Category is required")
         ward.category = category
     if floor is not None:
         ward.floor = floor.strip()
@@ -223,3 +228,45 @@ def update_bed(
         bed.package_rate = package_rate
     audit(db, user_id, "bed_update", "bed", str(bed.id), bed.code)
     return bed
+
+
+def list_capital_assets(db: Session, branch_id: int) -> list[CapitalAsset]:
+    return db.query(CapitalAsset).filter(CapitalAsset.branch_id == branch_id).order_by(CapitalAsset.purchased_on.desc()).all()
+
+
+def create_capital_asset(
+    db: Session,
+    *,
+    branch_id: int,
+    name: str,
+    category: str,
+    cost: float,
+    purchased_on: date | None,
+    notes: str,
+    user_id: int | None,
+) -> CapitalAsset:
+    name = name.strip()
+    if not name:
+        raise ValueError("Asset name is required")
+    if cost <= 0:
+        raise ValueError("Cost must be positive")
+    asset = CapitalAsset(
+        branch_id=branch_id,
+        name=name,
+        category=category.strip(),
+        cost=cost,
+        notes=notes.strip(),
+        **({"purchased_on": purchased_on} if purchased_on else {}),
+    )
+    db.add(asset)
+    db.flush()
+    audit(db, user_id, "capital_asset_create", "capital_asset", str(asset.id), f"{name} ({cost:.0f})")
+    return asset
+
+
+def delete_capital_asset(db: Session, asset_id: int, user_id: int | None) -> None:
+    asset = db.get(CapitalAsset, asset_id)
+    if not asset:
+        raise ValueError("Capital asset not found")
+    audit(db, user_id, "capital_asset_delete", "capital_asset", str(asset.id), asset.name)
+    db.delete(asset)

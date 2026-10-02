@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import api, { getApiError } from '../../lib/api'
 import { useToast } from '../../lib/toast'
 import { useBranchId } from '../../hooks/useBranchId'
-import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import Modal from '../../components/Modal'
 
@@ -124,16 +123,21 @@ export default function AdminWardsPage() {
 
   return (
     <div>
-      <PageHeader title="Ward & Bed Management" subtitle="Ward အသစ်ဖန်တီး၊ Bed နှင့် rate (daily/hourly/package) သတ်မှတ်ပါ" />
-
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="space-y-4">
           <div className="card space-y-3">
             <h3 className="font-semibold text-slate-800">Add Ward</h3>
             <input className="input" placeholder="Ward name *" value={wardForm.name} onChange={(e) => setWardForm({ ...wardForm, name: e.target.value })} />
-            <select className="input" value={wardForm.category} onChange={(e) => setWardForm({ ...wardForm, category: e.target.value })}>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c.toUpperCase()}</option>)}
-            </select>
+            <input
+              className="input"
+              list="ward-category-options"
+              placeholder="Category (e.g. general)"
+              value={wardForm.category}
+              onChange={(e) => setWardForm({ ...wardForm, category: e.target.value })}
+            />
+            <datalist id="ward-category-options">
+              {CATEGORIES.map((c) => <option key={c} value={c} />)}
+            </datalist>
             <input className="input" placeholder="Floor (optional)" value={wardForm.floor} onChange={(e) => setWardForm({ ...wardForm, floor: e.target.value })} />
             <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={addWard}>Create Ward</button>
           </div>
@@ -207,9 +211,13 @@ export default function AdminWardsPage() {
       {editWard && (
         <Modal title={`Edit Ward — ${editWard.name}`} onClose={() => setEditWard(null)}>
           <input className="input" value={editWard.name} onChange={(e) => setEditWard({ ...editWard, name: e.target.value })} />
-          <select className="input" value={editWard.category} onChange={(e) => setEditWard({ ...editWard, category: e.target.value })}>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c.toUpperCase()}</option>)}
-          </select>
+          <input
+            className="input"
+            list="ward-category-options"
+            placeholder="Category (e.g. general)"
+            value={editWard.category}
+            onChange={(e) => setEditWard({ ...editWard, category: e.target.value })}
+          />
           <input className="input" placeholder="Floor" value={editWard.floor} onChange={(e) => setEditWard({ ...editWard, floor: e.target.value })} />
           <div className="flex gap-2">
             <button type="button" disabled={busy} className="btn btn-primary flex-1" onClick={saveWardEdit}>Save</button>

@@ -3,14 +3,16 @@ import { useAuth } from '../lib/auth'
 
 const links = [
   { to: '/admin/staff', label: 'Staff Accounts', icon: '👤' },
-  { to: '/admin/wards', label: 'Ward & Bed Management', icon: '🛏️' },
   { to: '/admin/owner', label: 'Owner Panel', icon: '📊' },
 ]
 
 export default function AdminLayout() {
   const { session, logout } = useAuth()
   const { pathname } = useLocation()
-  const activeLabel = links.find((l) => pathname.startsWith(l.to))?.label
+  // branch_admin is scoped to its own branch's Staff Accounts only — Owner Panel
+  // (cross-branch income/stock/CAPEX) stays owner-only (super_admin/hospital_admin).
+  const visibleLinks = session?.role === 'branch_admin' ? links.filter((l) => l.to !== '/admin/owner') : links
+  const activeLabel = visibleLinks.find((l) => pathname.startsWith(l.to))?.label
 
   return (
     <div className="min-h-screen flex">
@@ -20,7 +22,7 @@ export default function AdminLayout() {
           <div className="text-xs opacity-75">Shwe Muse Hospital</div>
         </div>
         <nav className="flex-1 py-2 space-y-0.5 px-2">
-          {links.map((l) => (
+          {visibleLinks.map((l) => (
             <NavLink
               key={l.to}
               to={l.to}

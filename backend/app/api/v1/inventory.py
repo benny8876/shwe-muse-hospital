@@ -32,10 +32,19 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 @router.get("/items")
 def items(
     warehouse_id: int | None = None,
+    branch_id: int | None = None,
     department: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require("inventory", "inventory.read", "pharmacy", "pos", "nursing", "reports")),
 ):
+    # warehouse_id (a single warehouse) takes priority if both are given; otherwise
+    # branch_id scopes to every warehouse that branch owns (Owner Panel's per-branch
+    # stock view — catalog items themselves are global, only StockBatch is
+    # per-warehouse, so "this branch's stock" means "summed over its warehouses").
+    # Neither given = combined across every branch, same as before this param existed.
+    scope: int | list[int] | None = warehouse_id
+    if scope is None and branch_id is not None:
+        scope = [w.id for w in db.query(Warehouse).filter(Warehouse.branch_id == branch_id)]
     q = db.query(CatalogItem).filter(CatalogItem.is_stock == True)  # noqa: E712
     if department:
         try:
@@ -46,8 +55,8 @@ def items(
     link_map = reagent_test_links_map(db, [r.id for r in rows]) if department == "lab" else {}
     out = []
     for r in rows:
-        on_hand = stock_on_hand(db, r.id, warehouse_id)
-        exp = nearest_expiry(db, r.id, warehouse_id)
+        on_hand = stock_on_hand(db, r.id, scope)
+        exp = nearest_expiry(db, r.id, scope)
         row = {
             "item": r,
             "on_hand": on_hand,

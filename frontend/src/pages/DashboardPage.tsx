@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../lib/auth'
 import { visibleCounters } from '../lib/counterLinks'
+import { IconAdmin } from '../components/icons/CounterIcons'
 
 const TILE_COLORS = ['#e8f1fb', '#fdf3e3', '#e6f6ea', '#fbeaea', '#eaf2fa', '#f3e8fb', '#e3f6fa', '#fef0e6']
 
@@ -14,6 +15,10 @@ export default function DashboardPage() {
   // counter-only so day-to-day operations and structural admin never mix.
   const isAdmin = role === 'super_admin' || role === 'hospital_admin'
   const tiles = visibleCounters(role, session?.allowed_counters)
+  // branch_admin has no counters at all — its only destination is Admin Panel
+  // (Staff Accounts, scoped to its own branch), so it needs its own visible
+  // tile here rather than relying on the small collapsed sidebar icon.
+  const isBranchAdmin = role === 'branch_admin'
 
   return (
     <div>
@@ -38,9 +43,21 @@ export default function DashboardPage() {
             <span className="text-xs font-medium text-slate-700 leading-tight">{t(tile.label)}</span>
           </Link>
         ))}
+
+        {isBranchAdmin && (
+          <Link to="/admin/staff" className="flex flex-col items-center gap-2 text-center group">
+            <div
+              className="h-16 w-16 rounded-full flex items-center justify-center transition group-hover:scale-105 group-hover:shadow-md"
+              style={{ background: TILE_COLORS[tiles.length % TILE_COLORS.length] }}
+            >
+              <IconAdmin size={30} />
+            </div>
+            <span className="text-xs font-medium text-slate-700 leading-tight">Admin Panel</span>
+          </Link>
+        )}
       </div>
 
-      {tiles.length === 0 && !isAdmin && (
+      {tiles.length === 0 && !isAdmin && !isBranchAdmin && (
         <div className="card mt-4 text-slate-500 text-sm">သင့် account အတွက် ဖွင့်ထားတဲ့ counter မရှိသေးပါ။</div>
       )}
     </div>

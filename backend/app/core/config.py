@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     sms_enabled: bool = True
     whatsapp_enabled: bool = False
     demo_otp: str = "123456"
+    # Shared secret a branch's scripts/push_sync.py cron job sends in the
+    # X-Sync-Key header when pushing its daily rollup to the cloud Admin Panel
+    # instance — there's no logged-in user for an unattended cron push, so this
+    # is a separate, simpler auth path from the JWT login flow everything else uses.
+    sync_shared_key: str = "dev-sync-key-change-me-shwe-muse"
 
     @property
     def origins_list(self) -> list[str]:

@@ -157,11 +157,12 @@ def refund_payment(
     recalc_invoice(inv, db)
     if amount > inv.paid + 0.01:
         raise ValueError(f"Refund cannot exceed amount paid ({inv.paid:.0f})")
-    p = Payment(invoice_id=inv.id, shift_id=shift_id, method="refund", amount=amount, received_by=user_id, notes=reason)
+    refund_method = method or "cash"
+    p = Payment(invoice_id=inv.id, shift_id=shift_id, method="refund", refund_method=refund_method, amount=amount, received_by=user_id, notes=reason)
     inv.payments.append(p)
     db.flush()
     recalc_invoice(inv, db)
-    post_refund(db, inv, p, method or "cash")
+    post_refund(db, inv, p, refund_method)
     return p
 
 

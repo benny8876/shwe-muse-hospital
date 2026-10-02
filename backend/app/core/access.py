@@ -5,6 +5,7 @@ from app.models.users import User
 
 COUNTER_DEFINITIONS = [
     {"key": "reception", "label": "Reception", "subtitle": "Register OPD or admit IPD patient"},
+    {"key": "appointments", "label": "Appointments", "subtitle": "Book and manage doctor appointments"},
     {"key": "patient-records", "label": "Patient Records", "subtitle": "Search patient visit & treatment history"},
     {"key": "pharmacy", "label": "Pharmacy", "subtitle": "Dispense medicine & ward orders"},
     {"key": "lab", "label": "Laboratory", "subtitle": "Order tests and enter results"},
@@ -14,14 +15,19 @@ COUNTER_DEFINITIONS = [
     {"key": "ipd", "label": "IPD Beds", "subtitle": "Ward/bed grid — admitted patients at a glance"},
     {"key": "store", "label": "Stock Management", "subtitle": "Stock by department — Pharmacy, Lab, X-ray, USG"},
     {"key": "cashier", "label": "Cashier", "subtitle": "Collect payments and expenses"},
-    {"key": "admin", "label": "Admin Panel", "subtitle": "Staff, ward/bed setup, owner reports"},
+    {"key": "ward-management", "label": "Ward & Bed Management", "subtitle": "Create wards, set bed rates (daily/hourly/package)"},
+    {"key": "admin", "label": "Admin Panel", "subtitle": "Staff accounts, owner reports"},
 ]
 
 COUNTER_TAB_DEFINITIONS: dict[str, list[dict[str, str]]] = {
     "reception": [
         {"key": "register", "label": "Register"},
+        {"key": "ipd-deposit", "label": "IPD Deposit"},
         {"key": "convert", "label": "Convert OPD ⇄ IPD"},
         {"key": "history", "label": "Bill History"},
+    ],
+    "appointments": [
+        {"key": "main", "label": "Appointments"},
     ],
     "patient-records": [
         {"key": "main", "label": "Patient Records"},
@@ -66,8 +72,10 @@ COUNTER_TAB_DEFINITIONS: dict[str, list[dict[str, str]]] = {
     ],
     "admin": [
         {"key": "staff", "label": "Staff Accounts"},
-        {"key": "wards", "label": "Ward & Bed Management"},
         {"key": "owner", "label": "Owner Panel"},
+    ],
+    "ward-management": [
+        {"key": "main", "label": "Ward & Bed Management"},
     ],
 }
 
@@ -86,7 +94,7 @@ ROLE_COUNTER_DEFAULTS: dict[str, list[str]] = {
     "hospital_admin": list(COUNTER_KEYS),
     "executive": ["cashier", "patient-records"],
     "cashier": ["cashier", "patient-records", "store"],
-    "receptionist": ["reception", "patient-records"],
+    "receptionist": ["reception", "appointments", "patient-records"],
     "doctor": ["reception", "patient-records"],
     "nurse": ["nurse", "ipd", "patient-records"],
     "pharmacist": ["pharmacy", "patient-records", "store"],
@@ -94,7 +102,7 @@ ROLE_COUNTER_DEFAULTS: dict[str, list[str]] = {
     "radiology": ["xray", "patient-records"],
     "usg": ["usg", "patient-records"],
     "ot_staff": ["xray", "patient-records"],
-    "casualty": ["reception", "patient-records"],
+    "casualty": ["reception", "appointments", "patient-records"],
     "warehouse": ["store"],
     "accountant": ["cashier", "patient-records"],
     "hr": ["cashier"],

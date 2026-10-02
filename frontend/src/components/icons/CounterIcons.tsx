@@ -205,6 +205,20 @@ export function IconOwnerPanel(props: IconProps) {
 export const IconIpd = IconWard
 export const IconStore = IconStock
 
+// Appointments — calendar page with a clock badge
+export function IconAppointment(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="4" y="4.5" width="16" height="15.5" rx="2" fill="#fff" stroke={INK} strokeWidth="1.4" />
+      <path d="M4 8.5h16" stroke={INK} strokeWidth="1.4" />
+      <path d="M8 3v3M16 3v3" stroke={INK} strokeWidth="1.4" strokeLinecap="round" />
+      <rect x="6.5" y="11" width="3" height="3" fill={BLUE_LIGHT} stroke={INK} strokeWidth="0.9" />
+      <circle cx="16.5" cy="15.5" r="4" fill={RED} stroke={INK} strokeWidth="1.2" />
+      <path d="M16.5 13.3v2.2l1.6 1" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </Base>
+  )
+}
+
 // Admin — gear
 export function IconAdmin(props: IconProps) {
   return (
