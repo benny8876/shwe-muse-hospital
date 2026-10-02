@@ -120,6 +120,7 @@ export default function OwnerPanelPage() {
   const [busy, setBusy] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [showAllExpenseCategories, setShowAllExpenseCategories] = useState(false)
   const [assets, setAssets] = useState<any[]>([])
   const [assetForm, setAssetForm] = useState(emptyAssetForm)
   const [assetModalOpen, setAssetModalOpen] = useState(false)
@@ -460,7 +461,11 @@ export default function OwnerPanelPage() {
                 <div className="card rounded-2xl shadow-sm border-0">
                   <h3 className="font-semibold mb-1">Expenses by Category</h3>
                   {(analytics.by_expense_category || []).length === 0 && <p className="text-sm text-slate-500 py-2">No data</p>}
-                  {(analytics.by_expense_category || []).map((c: any) => (
+                  {(
+                    showAllExpenseCategories
+                      ? (analytics.by_expense_category || [])
+                      : (analytics.by_expense_category || []).slice(0, 5)
+                  ).map((c: any) => (
                     <IconRow
                       key={c.category}
                       icon={<IconArrowDown color="#fff" />}
@@ -471,6 +476,16 @@ export default function OwnerPanelPage() {
                       valueClassName="text-[var(--status-danger-fg)]"
                     />
                   ))}
+                  {(analytics.by_expense_category || []).length > 5 && (
+                    <button
+                      type="button"
+                      className="text-sm font-medium mt-2 hover:underline"
+                      style={{ color: 'var(--brand-600)' }}
+                      onClick={() => setShowAllExpenseCategories((v) => !v)}
+                    >
+                      {showAllExpenseCategories ? 'Show less' : `+${(analytics.by_expense_category || []).length - 5} more`}
+                    </button>
+                  )}
                 </div>
               </div>
 
