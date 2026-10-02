@@ -48,7 +48,7 @@ const resources = {
   },
   my: {
     translation: {
-      appName: 'ရွှေမူး ဆေးရုံ',
+      appName: 'ရွှေမူဆယ် ဆေးရုံ',
       login: 'ဝင်ရောက်ရန်',
       logout: 'ထွက်ရန်',
       username: 'အသုံးပြုသူ',

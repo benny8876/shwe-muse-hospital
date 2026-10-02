@@ -12,7 +12,47 @@ import { downloadFile } from '../../lib/exportFile'
 
 type Branch = { id: number; code: string; name: string; name_mm: string; is_main: boolean }
 
-const emptyBranchForm = { code: '', name: '', name_mm: '', address: '', phone: '' }
+// Small line-icon chips for the stat cards (app-dashboard style) — kept local
+// to this page since they're finance-specific, unlike the clinical two-tone
+// icon set in components/icons/CounterIcons.tsx.
+function IconArrowUp() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  )
+}
+function IconArrowDown() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14M5 12l7 7 7-7" />
+    </svg>
+  )
+}
+function IconScale() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20h16M7 20V11M12 20V5M17 20v8" />
+    </svg>
+  )
+}
+function IconClockIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  )
+}
+function IconBox() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 8l-9-5-9 5 9 5 9-5Z" />
+      <path d="M3 8v8l9 5 9-5V8" />
+      <path d="M12 13v8" />
+    </svg>
+  )
+}
 
 // Owner-level view across branches — income/outcome reuses the same
 // per-branch analytics endpoint Cashier's own "Analyze" tab calls
@@ -34,8 +74,6 @@ export default function OwnerPanelPage() {
   const [items, setItems] = useState<any[]>([])
   const [stockQuery, setStockQuery] = useState('')
   const [busy, setBusy] = useState(false)
-  const [addBranchOpen, setAddBranchOpen] = useState(false)
-  const [branchForm, setBranchForm] = useState(emptyBranchForm)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [assets, setAssets] = useState<any[]>([])
@@ -56,29 +94,6 @@ export default function OwnerPanelPage() {
   useEffect(() => {
     loadBranches().then((data) => { if (data[0]) setBranchId((prev) => prev ?? data[0].id) })
   }, [])
-
-  async function addBranch() {
-    if (!branchForm.code.trim() || !branchForm.name.trim()) return toast.error('Branch code နဲ့ name လိုအပ်ပါတယ်')
-    setBusy(true)
-    try {
-      const { data: created } = await api.post('/admin/branches', {
-        code: branchForm.code.trim(),
-        name: branchForm.name.trim(),
-        name_mm: branchForm.name_mm.trim(),
-        address: branchForm.address.trim(),
-        phone: branchForm.phone.trim(),
-      })
-      toast.success(`${created.name} added`)
-      setBranchForm(emptyBranchForm)
-      setAddBranchOpen(false)
-      await loadBranches()
-      setBranchId(created.id)
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   async function loadAnalytics() {
     setBusy(true)
@@ -192,7 +207,7 @@ export default function OwnerPanelPage() {
     <div className="space-y-4">
       <PageHeader title="Owner Panel" subtitle="Income, expenses and stock — split by branch" />
 
-      <div className="card flex flex-wrap items-center gap-3">
+      <div className="card rounded-2xl flex flex-wrap items-center gap-3">
         <span className="text-sm font-medium text-slate-600">Branch:</span>
         <ToggleGroup
           className="flex-wrap"
@@ -208,7 +223,6 @@ export default function OwnerPanelPage() {
         >
           Rename
         </button>
-        <button type="button" className="btn btn-secondary btn-sm shrink-0" onClick={() => setAddBranchOpen(true)}>+ Add Branch</button>
       </div>
 
       {renameOpen && (
@@ -216,19 +230,6 @@ export default function OwnerPanelPage() {
           <div className="space-y-3">
             <input className="input" placeholder="Branch name" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
             <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={renameBranch}>Save</button>
-          </div>
-        </Modal>
-      )}
-
-      {addBranchOpen && (
-        <Modal title="Add Branch" onClose={() => setAddBranchOpen(false)}>
-          <div className="space-y-3">
-            <input className="input" placeholder="Branch code (e.g. BR2)" value={branchForm.code} onChange={(e) => setBranchForm({ ...branchForm, code: e.target.value })} />
-            <input className="input" placeholder="Name (English)" value={branchForm.name} onChange={(e) => setBranchForm({ ...branchForm, name: e.target.value })} />
-            <input className="input" placeholder="Name (Myanmar)" value={branchForm.name_mm} onChange={(e) => setBranchForm({ ...branchForm, name_mm: e.target.value })} />
-            <input className="input" placeholder="Address" value={branchForm.address} onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value })} />
-            <input className="input" placeholder="Phone" value={branchForm.phone} onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })} />
-            <button type="button" disabled={busy} className="btn btn-primary w-full" onClick={addBranch}>Save Branch</button>
           </div>
         </Modal>
       )}
@@ -245,6 +246,7 @@ export default function OwnerPanelPage() {
       {sub === 'income' && (
         <div className="space-y-4">
           <ToggleGroup
+            variant="pill"
             options={[
               { value: 'day', label: 'Today' },
               { value: 'month', label: 'This Month' },
@@ -255,22 +257,24 @@ export default function OwnerPanelPage() {
             onChange={(v) => setPeriod(v as any)}
           />
 
-          {!analytics && <div className="card text-slate-500 text-sm">{busy ? 'Loading...' : 'No data'}</div>}
+          {!analytics && <div className="card rounded-2xl text-slate-500 text-sm">{busy ? 'Loading...' : 'No data'}</div>}
 
           {analytics && (
             <>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard label="Income (Collected)" value={formatMoney(analytics.total_collected)} tone="success" />
-                <StatCard label="Outcome (Expenses)" value={formatMoney(analytics.total_expenses)} tone="danger" />
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <StatCard label="Income (Collected)" value={formatMoney(analytics.total_collected)} tone="success" icon={<IconArrowUp />} />
+                <StatCard label="Outcome (Expenses)" value={formatMoney(analytics.total_expenses)} tone="danger" icon={<IconArrowDown />} />
                 <StatCard
                   label="Net"
                   value={formatMoney(analytics.net)}
                   tone={analytics.net >= 0 ? 'success' : 'danger'}
+                  icon={<IconScale />}
+                  highlight
                 />
-                <StatCard label="Outstanding (Unpaid)" value={formatMoney(analytics.outstanding)} />
+                <StatCard label="Outstanding (Unpaid)" value={formatMoney(analytics.outstanding)} icon={<IconClockIcon />} />
               </div>
 
-              <div className="card space-y-3">
+              <div className="card rounded-2xl space-y-3">
                 <h3 className="font-semibold">{period === 'day' ? 'Hourly Collection' : 'Daily Collection'}</h3>
                 {(analytics.trend || []).length === 0 ? (
                   <p className="text-sm text-slate-500">No collection data for this period</p>
@@ -313,16 +317,17 @@ export default function OwnerPanelPage() {
                 )}
               </div>
 
-              <div className="grid sm:grid-cols-2 gap-4">
-                <StatCard label="Capital Assets (Equipment)" value={formatMoney(totalCapex)} tone="danger" />
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                <StatCard label="Capital Assets (Equipment)" value={formatMoney(totalCapex)} tone="danger" icon={<IconBox />} />
                 <StatCard
-                  label="Net after equipment investment"
+                  label="Net after equipment"
                   value={formatMoney(analytics.net - totalCapex)}
                   tone={analytics.net - totalCapex >= 0 ? 'success' : 'danger'}
+                  icon={<IconScale />}
                 />
               </div>
 
-              <div className="card space-y-3">
+              <div className="card rounded-2xl space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="font-semibold">Capital Assets</h3>
@@ -346,7 +351,7 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No capital assets recorded yet</p>
                   ) : (
                     assets.map((r: any) => (
-                      <div key={r.id} className="rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-3">
+                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <div className="font-medium truncate">{r.name}</div>
                           <div className="text-xs text-slate-500 truncate">{r.category || '—'} · {formatDate(r.purchased_on)}</div>
@@ -361,6 +366,7 @@ export default function OwnerPanelPage() {
                 </div>
                 <div className="hidden sm:block">
                   <DataTable
+                    wrapperClassName="rounded-2xl"
                     rows={assets}
                     columns={[
                       { key: 'name', label: 'Name', render: (r: any) => <span className="font-medium">{r.name}</span> },
@@ -390,7 +396,7 @@ export default function OwnerPanelPage() {
               )}
 
               <div className="grid lg:grid-cols-2 gap-4">
-                <div className="card">
+                <div className="card rounded-2xl">
                   <h3 className="font-semibold mb-3">Income by Source</h3>
                   {(analytics.by_source || []).length === 0 && <p className="text-sm text-slate-500">No data</p>}
                   {(analytics.by_source || []).map((s: any) => (
@@ -400,7 +406,7 @@ export default function OwnerPanelPage() {
                     </div>
                   ))}
                 </div>
-                <div className="card">
+                <div className="card rounded-2xl">
                   <h3 className="font-semibold mb-3">Expenses by Category</h3>
                   {(analytics.by_expense_category || []).length === 0 && <p className="text-sm text-slate-500">No data</p>}
                   {(analytics.by_expense_category || []).map((c: any) => (
@@ -412,7 +418,7 @@ export default function OwnerPanelPage() {
                 </div>
               </div>
 
-              <div className="card">
+              <div className="card rounded-2xl">
                 <h3 className="font-semibold mb-3">Recent Expenses</h3>
 
                 <div className="sm:hidden space-y-2">
@@ -420,7 +426,7 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
                   ) : (
                     (analytics.expense_details || []).map((r: any) => (
-                      <div key={r.id} className="rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-3">
+                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <div className="font-medium truncate">{r.category}</div>
                           <div className="text-xs text-slate-500 truncate">
@@ -436,6 +442,7 @@ export default function OwnerPanelPage() {
                 </div>
                 <div className="hidden sm:block">
                   <DataTable
+                    wrapperClassName="rounded-2xl"
                     rows={analytics.expense_details || []}
                     columns={[
                       { key: 'date', label: 'Date', render: (r: any) => formatDate(String(r.created_at)) },
@@ -483,7 +490,7 @@ export default function OwnerPanelPage() {
               <p className="text-sm text-slate-500 text-center py-4">{busy ? 'Loading...' : 'No medicine found'}</p>
             ) : (
               filteredItems.map((r: any) => (
-                <div key={r.item.id} className="rounded-lg border border-slate-200 p-3">
+                <div key={r.item.id} className="rounded-xl border border-slate-200 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium truncate">{r.item.name}</div>
@@ -501,6 +508,7 @@ export default function OwnerPanelPage() {
           </div>
           <div className="hidden sm:block">
             <DataTable
+              wrapperClassName="rounded-2xl"
               rows={filteredItems}
               keyField={(r: any) => r.item.id}
               columns={[
