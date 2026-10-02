@@ -86,7 +86,7 @@ function IconRow({ icon, color, label, sub, value, valueClassName = '' }: {
 }) {
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
-      <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `${color}1a` }}>
+      <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: color }}>
         {icon}
       </div>
       <div className="min-w-0 flex-1">
@@ -251,7 +251,7 @@ export default function OwnerPanelPage() {
     <div className="space-y-4">
       <PageHeader title="Owner Panel" subtitle="Income, expenses and stock — split by branch" />
 
-      <div className="card rounded-2xl flex flex-wrap items-center gap-3">
+      <div className="card rounded-2xl shadow-sm border-0 flex flex-wrap items-center gap-3">
         <span className="text-sm font-medium text-slate-600">Branch:</span>
         <ToggleGroup
           className="flex-wrap"
@@ -301,24 +301,24 @@ export default function OwnerPanelPage() {
             onChange={(v) => setPeriod(v as any)}
           />
 
-          {!analytics && <div className="card rounded-2xl text-slate-500 text-sm">{busy ? 'Loading...' : 'No data'}</div>}
+          {!analytics && <div className="card rounded-2xl shadow-sm border-0 text-slate-500 text-sm">{busy ? 'Loading...' : 'No data'}</div>}
 
           {analytics && (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                <StatCard label="Income (Collected)" value={formatMoney(analytics.total_collected)} tone="success" icon={<IconArrowUp />} />
-                <StatCard label="Outcome (Expenses)" value={formatMoney(analytics.total_expenses)} tone="danger" icon={<IconArrowDown />} />
+                <StatCard label="Income (Collected)" value={formatMoney(analytics.total_collected)} tone="success" icon={<IconArrowUp color="#fff" />} />
+                <StatCard label="Outcome (Expenses)" value={formatMoney(analytics.total_expenses)} tone="danger" icon={<IconArrowDown color="#fff" />} />
                 <StatCard
                   label="Net"
                   value={formatMoney(analytics.net)}
                   tone={analytics.net >= 0 ? 'success' : 'danger'}
-                  icon={<IconScale />}
+                  icon={<IconScale color="#fff" />}
                   highlight
                 />
-                <StatCard label="Outstanding (Unpaid)" value={formatMoney(analytics.outstanding)} icon={<IconClockIcon />} />
+                <StatCard label="Outstanding (Unpaid)" value={formatMoney(analytics.outstanding)} icon={<IconClockIcon color="#fff" />} />
               </div>
 
-              <div className="card rounded-2xl space-y-3">
+              <div className="card rounded-2xl shadow-sm border-0 space-y-3">
                 <h3 className="font-semibold">{period === 'day' ? 'Hourly Collection' : 'Daily Collection'}</h3>
                 {(analytics.trend || []).length === 0 ? (
                   <p className="text-sm text-slate-500">No collection data for this period</p>
@@ -362,16 +362,16 @@ export default function OwnerPanelPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <StatCard label="Capital Assets (Equipment)" value={formatMoney(totalCapex)} tone="danger" icon={<IconBox />} />
+                <StatCard label="Capital Assets (Equipment)" value={formatMoney(totalCapex)} tone="danger" icon={<IconBox color="#fff" />} />
                 <StatCard
                   label="Net after equipment"
                   value={formatMoney(analytics.net - totalCapex)}
                   tone={analytics.net - totalCapex >= 0 ? 'success' : 'danger'}
-                  icon={<IconScale />}
+                  icon={<IconScale color="#fff" />}
                 />
               </div>
 
-              <div className="card rounded-2xl space-y-3">
+              <div className="card rounded-2xl shadow-sm border-0 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="font-semibold">Capital Assets</h3>
@@ -395,9 +395,9 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No capital assets recorded yet</p>
                   ) : (
                     assets.map((r: any) => (
-                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-bg)' }}>
-                          <IconBox color="var(--status-danger-fg)" />
+                      <div key={r.id} className="rounded-xl shadow-sm p-3 flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-fg)' }}>
+                          <IconBox color="#fff" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="font-medium truncate">{r.name}</div>
@@ -443,13 +443,13 @@ export default function OwnerPanelPage() {
               )}
 
               <div className="grid lg:grid-cols-2 gap-4">
-                <div className="card rounded-2xl">
+                <div className="card rounded-2xl shadow-sm border-0">
                   <h3 className="font-semibold mb-1">Income by Source</h3>
                   {(analytics.by_source || []).length === 0 && <p className="text-sm text-slate-500 py-2">No data</p>}
                   {(analytics.by_source || []).map((s: any) => (
                     <IconRow
                       key={s.source}
-                      icon={<IconArrowUp color="var(--status-success-fg)" />}
+                      icon={<IconArrowUp color="#fff" />}
                       color="var(--status-success-fg)"
                       label={s.source}
                       value={formatMoney(s.amount)}
@@ -457,13 +457,13 @@ export default function OwnerPanelPage() {
                     />
                   ))}
                 </div>
-                <div className="card rounded-2xl">
+                <div className="card rounded-2xl shadow-sm border-0">
                   <h3 className="font-semibold mb-1">Expenses by Category</h3>
                   {(analytics.by_expense_category || []).length === 0 && <p className="text-sm text-slate-500 py-2">No data</p>}
                   {(analytics.by_expense_category || []).map((c: any) => (
                     <IconRow
                       key={c.category}
-                      icon={<IconArrowDown color="var(--status-danger-fg)" />}
+                      icon={<IconArrowDown color="#fff" />}
                       color="var(--status-danger-fg)"
                       label={c.category}
                       sub={`×${c.count}`}
@@ -474,7 +474,7 @@ export default function OwnerPanelPage() {
                 </div>
               </div>
 
-              <div className="card rounded-2xl">
+              <div className="card rounded-2xl shadow-sm border-0">
                 <h3 className="font-semibold mb-3">Recent Expenses</h3>
 
                 <div className="sm:hidden space-y-2">
@@ -482,9 +482,9 @@ export default function OwnerPanelPage() {
                     <p className="text-sm text-slate-500 text-center py-4">No expenses in this period</p>
                   ) : (
                     (analytics.expense_details || []).map((r: any) => (
-                      <div key={r.id} className="rounded-xl border border-slate-200 p-3 flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-bg)' }}>
-                          <IconReceipt color="var(--status-danger-fg)" />
+                      <div key={r.id} className="rounded-xl shadow-sm p-3 flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--status-danger-fg)' }}>
+                          <IconReceipt color="#fff" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="font-medium truncate">{r.category}</div>
@@ -549,13 +549,13 @@ export default function OwnerPanelPage() {
               <p className="text-sm text-slate-500 text-center py-4">{busy ? 'Loading...' : 'No medicine found'}</p>
             ) : (
               filteredItems.map((r: any) => (
-                <div key={r.item.id} className="rounded-xl border border-slate-200 p-3">
+                <div key={r.item.id} className="rounded-xl shadow-sm p-3">
                   <div className="flex items-start gap-3">
                     <div
                       className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
-                      style={{ background: r.is_low ? 'var(--status-danger-bg)' : 'var(--status-success-bg)' }}
+                      style={{ background: r.is_low ? 'var(--status-danger-fg)' : 'var(--status-success-fg)' }}
                     >
-                      <IconPill color={r.is_low ? 'var(--status-danger-fg)' : 'var(--status-success-fg)'} />
+                      <IconPill color="#fff" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium truncate">{r.item.name}</div>

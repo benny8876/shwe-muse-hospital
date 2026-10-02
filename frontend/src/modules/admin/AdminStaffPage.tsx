@@ -157,7 +157,7 @@ export default function AdminStaffPage() {
       <PageHeader title="Staff Accounts" subtitle="Counter login account တွေကို ဖန်တီး/ပြင်ဆင်/disable လုပ်ပါ" />
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="card rounded-2xl space-y-3">
+        <div className="card rounded-2xl shadow-sm border-0 space-y-3">
           <h3 className="font-semibold">Add Staff Account</h3>
           <input className="input" placeholder="Username *" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
           <input className="input" type="password" placeholder="Password * (min 8, upper/lower/digit/symbol)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
@@ -185,12 +185,12 @@ export default function AdminStaffPage() {
               scrolled table. Desktop keeps the table. */}
           <div className="lg:hidden space-y-2">
             {filtered.length === 0 ? (
-              <div className="card rounded-2xl text-center text-slate-500 text-sm py-6">No staff accounts</div>
+              <div className="card rounded-2xl shadow-sm border-0 text-center text-slate-500 text-sm py-6">No staff accounts</div>
             ) : (
               filtered.map((r) => {
                 const locked = isBranchAdmin && ADMIN_TIER_ROLES.includes(r.role)
                 return (
-                  <div key={r.id} className="card rounded-2xl">
+                  <div key={r.id} className="card rounded-2xl shadow-sm border-0">
                     <div className="flex items-center gap-3">
                       <div
                         className="h-10 w-10 rounded-full flex items-center justify-center shrink-0 font-semibold"
