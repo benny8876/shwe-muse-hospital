@@ -90,7 +90,12 @@ const NURSE_ROLES = ['nurse', 'super_admin', 'hospital_admin']
 const IPD_ROLES = ['nurse', 'super_admin', 'hospital_admin']
 const STORE_ROLES = ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin']
 const CASHIER_ROLES = ['cashier', 'super_admin', 'hospital_admin', 'executive', 'accountant', 'hr']
-const WARD_MANAGEMENT_ROLES = ['super_admin', 'hospital_admin']
+// Ward/bed structure is branch_admin's job now (scoped to its own branch
+// server-side), not the owner's — see app/core/access.py's ROLE_COUNTER_DEFAULTS,
+// which is what actually gates this for hospital_admin/branch_admin accounts
+// (their allowed_counters is always non-empty, so it's used instead of this
+// role list — kept accurate here only as the fallback for an empty override).
+const WARD_MANAGEMENT_ROLES = ['super_admin', 'branch_admin']
 
 export default function App() {
   return (

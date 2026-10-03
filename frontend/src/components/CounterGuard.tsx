@@ -15,7 +15,7 @@ const COUNTER_LOGINS: Record<string, { users: string[]; title: string; titleMm: 
   ipd: { users: ['nurse'], title: 'IPD Beds', titleMm: 'IPD အိပ်ရာ စခန်း' },
   store: { users: ['warehouse', 'cashier', 'pharmacy'], title: 'Stock Management', titleMm: 'ကုန်ပစ္စည်းစီမံခန့်ခွဲမှု' },
   cashier: { users: ['cashier'], title: 'Cashier counter', titleMm: 'Cashier ကောင်တာ' },
-  'ward-management': { users: ['admin'], title: 'Ward & Bed Management', titleMm: 'Ward & Bed စီမံခန့်ခွဲမှု' },
+  'ward-management': { users: ['admin1', 'admin2'], title: 'Ward & Bed Management', titleMm: 'Ward & Bed စီမံခန့်ခွဲမှု' },
 }
 
 type Props = {

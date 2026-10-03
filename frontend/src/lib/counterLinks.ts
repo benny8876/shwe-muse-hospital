@@ -37,7 +37,7 @@ export const COUNTER_LINKS: CounterLink[] = [
   { key: 'ipd', to: '/counter/ipd', label: 'counterIpd', icon: IconIpd, roles: ['nurse', 'super_admin', 'hospital_admin'], subtitle: 'Ward/bed grid — see who is in each bed and running bill' },
   { key: 'store', to: '/counter/store', label: 'counterStore', icon: IconStore, roles: ['warehouse', 'cashier', 'pharmacist', 'super_admin', 'hospital_admin'], subtitle: 'Stock by department — Pharmacy, Lab, X-ray, USG' },
   { key: 'cashier', to: '/counter/cashier', label: 'counterCashier', icon: IconCashier, roles: ['cashier', 'super_admin', 'hospital_admin', 'executive', 'accountant', 'hr'], subtitle: 'Collect payment & expenses' },
-  { key: 'ward-management', to: '/counter/ward-management', label: 'counterWardManagement', icon: IconWard, roles: ['super_admin', 'hospital_admin'], subtitle: 'Create wards, set bed rates (daily/hourly/package)' },
+  { key: 'ward-management', to: '/counter/ward-management', label: 'counterWardManagement', icon: IconWard, roles: ['super_admin', 'branch_admin'], subtitle: 'Create wards, set bed rates (daily/hourly/package)' },
 ]
 
 export function visibleCounters(role: string, allowedCounters?: string[] | null) {

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require
 from app.db.session import get_db
+from app.models.ipd import Bed, Ward
 from app.models.org import Branch
 from app.models.users import User
 from app.schemas.admin import (
@@ -46,37 +47,42 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # the permission check entirely in require()) can reach these endpoints.
 ADMIN_ONLY = "__admin__"
 
-# Roles that may reach the /admin/staff endpoints at all. super_admin/hospital_admin
-# see and manage every branch's staff; branch_admin is scoped to its own branch only
-# (enforced below, not via the generic PERMS/can() mechanism) and can never touch an
-# admin-tier account (super_admin/hospital_admin/branch_admin), even one in its own
-# branch — that distinction can't be expressed as a flat permission string, so it's
-# checked explicitly in each endpoint below rather than via require().
+# Roles that may reach the /admin/staff and ward/bed endpoints at all.
+# super_admin/hospital_admin see and manage every branch; branch_admin is
+# scoped to its own branch only (enforced per-endpoint below, not via the
+# generic PERMS/can() mechanism, since "same branch" can't be expressed as a
+# flat permission string) and can never touch an admin-tier account
+# (super_admin/hospital_admin/branch_admin), even one in its own branch.
 OWNER_ROLES = ("super_admin", "hospital_admin")
 ADMIN_TIER_ROLES = (*OWNER_ROLES, "branch_admin")
-STAFF_ADMIN_ROLES = (*OWNER_ROLES, "branch_admin")
+BRANCH_SCOPED_ADMIN_ROLES = (*OWNER_ROLES, "branch_admin")
 
 
-def require_staff_admin():
+def require_branch_scoped_admin():
     def checker(user: User = Depends(get_current_user)) -> User:
-        if user.role not in STAFF_ADMIN_ROLES:
+        if user.role not in BRANCH_SCOPED_ADMIN_ROLES:
             raise HTTPException(403, "Not allowed")
         return user
 
     return checker
 
 
+def _scope_branch_id(user: User) -> int | None:
+    """None for super_admin/hospital_admin (unscoped); branch_admin's own
+    branch_id otherwise."""
+    return user.branch_id if user.role == "branch_admin" else None
+
+
 @router.get("/staff", response_model=list[StaffOut])
-def admin_list_staff(db: Session = Depends(get_db), user: User = Depends(require_staff_admin())):
-    scope_branch_id = user.branch_id if user.role == "branch_admin" else None
-    return list_staff(db, branch_id=scope_branch_id)
+def admin_list_staff(db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    return list_staff(db, branch_id=_scope_branch_id(user))
 
 
 @router.post("/staff", response_model=StaffOut)
 def admin_create_staff(
     data: StaffCreateIn,
     db: Session = Depends(get_db),
-    user: User = Depends(require_staff_admin()),
+    user: User = Depends(require_branch_scoped_admin()),
 ):
     branch_id = data.branch_id
     if user.role == "branch_admin":
@@ -108,7 +114,7 @@ def admin_update_staff(
     staff_id: int,
     data: StaffUpdateIn,
     db: Session = Depends(get_db),
-    user: User = Depends(require_staff_admin()),
+    user: User = Depends(require_branch_scoped_admin()),
 ):
     sent = data.model_dump(exclude_unset=True)
     if user.role == "branch_admin":
@@ -145,7 +151,7 @@ def admin_reset_password(
     staff_id: int,
     data: ResetPasswordIn,
     db: Session = Depends(get_db),
-    user: User = Depends(require_staff_admin()),
+    user: User = Depends(require_branch_scoped_admin()),
 ):
     if user.role == "branch_admin":
         target = db.get(User, staff_id)
@@ -188,14 +194,21 @@ def admin_update_branch(branch_id: int, data: BranchUpdateIn, db: Session = Depe
 
 
 @router.get("/wards", response_model=list[WardOut])
-def admin_list_wards(branch_id: int, db: Session = Depends(get_db), _: User = Depends(require(ADMIN_ONLY))):
+def admin_list_wards(branch_id: int, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    scope = _scope_branch_id(user)
+    if scope is not None and branch_id != scope:
+        raise HTTPException(403, "Not allowed")
     return list_wards(db, branch_id)
 
 
 @router.post("/wards", response_model=WardOut)
-def admin_create_ward(data: WardCreateIn, db: Session = Depends(get_db), user: User = Depends(require(ADMIN_ONLY))):
+def admin_create_ward(data: WardCreateIn, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    branch_id = data.branch_id
+    scope = _scope_branch_id(user)
+    if scope is not None:
+        branch_id = scope  # force own branch — ignore any branch_id sent by the client
     try:
-        ward = create_ward(db, branch_id=data.branch_id, name=data.name, category=data.category, floor=data.floor, user_id=user.id)
+        ward = create_ward(db, branch_id=branch_id, name=data.name, category=data.category, floor=data.floor, user_id=user.id)
         db.commit()
         db.refresh(ward)
         return ward
@@ -204,7 +217,12 @@ def admin_create_ward(data: WardCreateIn, db: Session = Depends(get_db), user: U
 
 
 @router.patch("/wards/{ward_id}", response_model=WardOut)
-def admin_update_ward(ward_id: int, data: WardUpdateIn, db: Session = Depends(get_db), user: User = Depends(require(ADMIN_ONLY))):
+def admin_update_ward(ward_id: int, data: WardUpdateIn, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    scope = _scope_branch_id(user)
+    if scope is not None:
+        ward = db.get(Ward, ward_id)
+        if not ward or ward.branch_id != scope:
+            raise HTTPException(403, "Not allowed")
     try:
         ward = update_ward(db, ward_id, name=data.name, category=data.category, floor=data.floor, user_id=user.id)
         db.commit()
@@ -215,12 +233,22 @@ def admin_update_ward(ward_id: int, data: WardUpdateIn, db: Session = Depends(ge
 
 
 @router.get("/wards/{ward_id}/beds", response_model=list[BedOut])
-def admin_list_beds(ward_id: int, db: Session = Depends(get_db), _: User = Depends(require(ADMIN_ONLY))):
+def admin_list_beds(ward_id: int, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    scope = _scope_branch_id(user)
+    if scope is not None:
+        ward = db.get(Ward, ward_id)
+        if not ward or ward.branch_id != scope:
+            raise HTTPException(403, "Not allowed")
     return list_beds(db, ward_id)
 
 
 @router.post("/beds", response_model=BedOut)
-def admin_create_bed(data: BedCreateIn, db: Session = Depends(get_db), user: User = Depends(require(ADMIN_ONLY))):
+def admin_create_bed(data: BedCreateIn, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    scope = _scope_branch_id(user)
+    if scope is not None:
+        ward = db.get(Ward, data.ward_id)
+        if not ward or ward.branch_id != scope:
+            raise HTTPException(403, "Not allowed")
     try:
         bed = create_bed(
             db,
@@ -239,7 +267,13 @@ def admin_create_bed(data: BedCreateIn, db: Session = Depends(get_db), user: Use
 
 
 @router.patch("/beds/{bed_id}", response_model=BedOut)
-def admin_update_bed(bed_id: int, data: BedUpdateIn, db: Session = Depends(get_db), user: User = Depends(require(ADMIN_ONLY))):
+def admin_update_bed(bed_id: int, data: BedUpdateIn, db: Session = Depends(get_db), user: User = Depends(require_branch_scoped_admin())):
+    scope = _scope_branch_id(user)
+    if scope is not None:
+        bed = db.get(Bed, bed_id)
+        ward = db.get(Ward, bed.ward_id) if bed else None
+        if not bed or not ward or ward.branch_id != scope:
+            raise HTTPException(403, "Not allowed")
     try:
         bed = update_bed(
             db,

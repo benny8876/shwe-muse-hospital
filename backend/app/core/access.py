@@ -91,16 +91,20 @@ ALL_FEATURE_KEYS = sorted(
 
 ROLE_COUNTER_DEFAULTS: dict[str, list[str]] = {
     "super_admin": list(COUNTER_KEYS),
-    "hospital_admin": list(COUNTER_KEYS),
+    # Owner is cross-branch reporting only (Owner Panel) — ward/bed structure
+    # is now each branch's own local admin's job (see branch_admin below), not
+    # something the owner manages day to day.
+    "hospital_admin": [c for c in COUNTER_KEYS if c != "ward-management"],
     # Every day-to-day operational counter for their own branch (the actual
     # branch_id scoping comes from their own User.branch_id, same as any other
-    # counter staff account) — but never "admin" (the Admin Panel pseudo-key)
-    # or "ward-management", which stay owner-only. This list is returned to the
-    # frontend as a non-empty allowed_counters array, which both
-    # visibleCounters() and CounterGuard's canAccessCounter() then use to
-    # decide access *instead of* the per-counter role arrays in App.tsx /
-    # counterLinks.ts — so this one list is the only place that needs updating.
-    "branch_admin": [c for c in COUNTER_KEYS if c not in ("admin", "ward-management")],
+    # counter staff account), including ward/bed structure (scoped to its own
+    # branch server-side in app/api/v1/admin.py) — but never "admin" (the
+    # Admin Panel pseudo-key). This list is returned to the frontend as a
+    # non-empty allowed_counters array, which both visibleCounters() and
+    # CounterGuard's canAccessCounter() then use to decide access *instead of*
+    # the per-counter role arrays in App.tsx / counterLinks.ts — so this one
+    # list is the only place that needs updating.
+    "branch_admin": [c for c in COUNTER_KEYS if c != "admin"],
     "executive": ["cashier", "patient-records"],
     "cashier": ["cashier", "patient-records", "store"],
     "receptionist": ["reception", "appointments", "patient-records"],

@@ -133,11 +133,68 @@ def test_branch_admin_can_use_counter_operations_but_not_owner_endpoints(client,
     r = client.get("/api/v1/counter/active-patients", params={"branch_id": branch_id}, headers=ba["headers"])
     assert r.status_code == 200
 
-    # But still locked out of owner-only admin tooling — "*" in PERMS never
+    # Still locked out of owner-only admin tooling — "*" in PERMS never
     # grants the "__admin__" sentinel (see app/core/rbac.py's comment).
     r = client.get("/api/v1/admin/branches", headers=ba["headers"])
     assert r.status_code == 403
-    r = client.get("/api/v1/admin/wards", params={"branch_id": branch_id}, headers=ba["headers"])
-    assert r.status_code == 403
     r = client.get("/api/v1/admin/capital-assets", params={"branch_id": branch_id}, headers=ba["headers"])
     assert r.status_code == 403
+
+    # Ward/bed management IS allowed, but scoped to its own branch (see
+    # test_branch_admin_wards_are_scoped_to_its_own_branch below).
+    r = client.get("/api/v1/admin/wards", params={"branch_id": branch_id}, headers=ba["headers"])
+    assert r.status_code == 200
+
+
+def test_branch_admin_wards_are_scoped_to_its_own_branch(client, admin_headers, auth_headers):
+    r = client.post(
+        "/api/v1/admin/branches",
+        json={"code": _unique("BE"), "name": "Branch Admin Test Branch 5"},
+        headers=admin_headers,
+    )
+    branch_id = r.json()["id"]
+    other_branch_id = 1 if branch_id != 1 else 2
+    ba = _make_branch_admin(client, admin_headers, auth_headers, branch_id)
+
+    # Cannot list another branch's wards.
+    r = client.get("/api/v1/admin/wards", params={"branch_id": other_branch_id}, headers=ba["headers"])
+    assert r.status_code == 403
+
+    # Creating a ward forces branch_id to its own branch regardless of what's sent.
+    r = client.post(
+        "/api/v1/admin/wards",
+        json={"branch_id": other_branch_id, "name": "Sneaky Ward", "category": "general", "floor": ""},
+        headers=ba["headers"],
+    )
+    assert r.status_code == 200
+    ward_id = r.json()["id"]
+    assert r.json()["branch_id"] == branch_id
+
+    # Owner can update/add beds freely; branch_admin from the *other* branch cannot.
+    other_ba = _make_branch_admin(client, admin_headers, auth_headers, other_branch_id)
+    r = client.patch(f"/api/v1/admin/wards/{ward_id}", json={"name": "Hacked"}, headers=other_ba["headers"])
+    assert r.status_code == 403
+    r = client.get(f"/api/v1/admin/wards/{ward_id}/beds", headers=other_ba["headers"])
+    assert r.status_code == 403
+    r = client.post(
+        "/api/v1/admin/beds",
+        json={"ward_id": ward_id, "code": "X-1", "daily_rate": 10000, "hourly_rate": 0, "package_rate": 0},
+        headers=other_ba["headers"],
+    )
+    assert r.status_code == 403
+
+    # Its own branch can manage the ward/bed normally.
+    r = client.patch(f"/api/v1/admin/wards/{ward_id}", json={"name": "Renamed Ward"}, headers=ba["headers"])
+    assert r.status_code == 200
+    r = client.post(
+        "/api/v1/admin/beds",
+        json={"ward_id": ward_id, "code": "A-1", "daily_rate": 10000, "hourly_rate": 0, "package_rate": 0},
+        headers=ba["headers"],
+    )
+    assert r.status_code == 200
+    bed_id = r.json()["id"]
+
+    r = client.patch(f"/api/v1/admin/beds/{bed_id}", json={"code": "A-2"}, headers=other_ba["headers"])
+    assert r.status_code == 403
+    r = client.patch(f"/api/v1/admin/beds/{bed_id}", json={"code": "A-2"}, headers=ba["headers"])
+    assert r.status_code == 200
