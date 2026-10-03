@@ -61,8 +61,11 @@ def _normalize_access(
     return counters, normalized_features, permissions
 
 
-def list_developer_users(db: Session) -> list[dict]:
-    rows = db.query(User).order_by(User.role, User.full_name).all()
+def list_developer_users(db: Session, branch_id: int | None = None) -> list[dict]:
+    q = db.query(User).order_by(User.role, User.full_name)
+    if branch_id is not None:
+        q = q.filter(User.branch_id == branch_id)
+    rows = q.all()
     out = []
     for user in rows:
         payload = user_access_payload(user)

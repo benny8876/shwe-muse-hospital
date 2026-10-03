@@ -61,6 +61,13 @@ def admin_headers(auth_headers):
 
 
 @pytest.fixture(scope="session")
+def dev_headers(auth_headers):
+    # "admin" is hospital_admin (Owner Panel only, see app/db/seed.py) —
+    # "dev1" is the branch-local super_admin with Developer Panel access.
+    return auth_headers("dev1")
+
+
+@pytest.fixture(scope="session")
 def cashier_headers(auth_headers):
     return auth_headers("cashier")
 

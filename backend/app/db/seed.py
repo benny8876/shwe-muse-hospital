@@ -74,7 +74,7 @@ def seed(db: Session):
     db.add(PettyCash(branch_id=main.id, balance=500000))
 
     users = [
-        ("admin", "super_admin", "System Admin", 0, 0),
+        ("admin", "hospital_admin", "System Admin", 0, 0),
         ("cashier", "cashier", "Cashier One", 0, 0),
         ("receptionist", "receptionist", "Reception", 0, 0),
         ("doctor1", "doctor", "Dr. Aung Kyaw", 10000, 70),
@@ -103,6 +103,22 @@ def seed(db: Session):
         db.add(u)
         if username == "doctor1":
             doctor_user = u
+    db.flush()
+
+    # Branch-local accounts — the Owner (hospital_admin, above) manages
+    # cross-branch reports only; each branch's own branch_admin ("adminN")
+    # manages its own staff (see app/api/v1/admin.py's STAFF_ADMIN_ROLES
+    # scoping), and its own super_admin ("devN") is the branch-local
+    # break-glass account for Developer Panel (scoped in app/api/v1/developer.py
+    # to its own branch_id) — mirrors the two offline branch servers never
+    # being networked together in the real deployment.
+    for username, role, name, branch_id in [
+        ("admin1", "branch_admin", "Branch 1 Admin", main.id),
+        ("dev1", "super_admin", "Branch 1 Developer", main.id),
+        ("admin2", "branch_admin", "Branch 2 Admin", clinic.id),
+        ("dev2", "super_admin", "Branch 2 Developer", clinic.id),
+    ]:
+        db.add(User(username=username, hashed_password=pw, full_name=name, role=role, branch_id=branch_id))
     db.flush()
 
     corp = CorporateAccount(name="ABC Company", kind="corporate", contact="HR", phone="09-999")
@@ -238,6 +254,23 @@ def ensure_extra_seed(db: Session) -> None:
     for username, role, name in extra_users:
         if not db.query(User).filter(User.username == username).first():
             db.add(User(username=username, hashed_password=pw, full_name=name, role=role, branch_id=branch.id))
+
+    # Upgrade a pre-existing DB to the branch-local admin/developer model (see
+    # the matching block in seed() above): demote the original "admin" login
+    # from super_admin (global, now unused day-to-day) to hospital_admin
+    # (Owner Panel only), and top up each existing branch with its own
+    # branch_admin ("adminN") and super_admin ("devN") if missing.
+    admin_user = db.query(User).filter(User.username == "admin").first()
+    if admin_user and admin_user.role == "super_admin":
+        admin_user.role = "hospital_admin"
+
+    for i, b in enumerate(db.query(Branch).order_by(Branch.id).all(), start=1):
+        for username, role, name in [
+            (f"admin{i}", "branch_admin", f"Branch {i} Admin"),
+            (f"dev{i}", "super_admin", f"Branch {i} Developer"),
+        ]:
+            if not db.query(User).filter(User.username == username).first():
+                db.add(User(username=username, hashed_password=pw, full_name=name, role=role, branch_id=b.id))
 
     def _ensure_item(sku: str, name: str, category: str, department: str, price: float, cost_pct: float = 0.6):
         if db.query(CatalogItem).filter(CatalogItem.sku == sku).first():

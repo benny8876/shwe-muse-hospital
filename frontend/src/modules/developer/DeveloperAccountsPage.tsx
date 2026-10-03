@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import api, { getApiError } from '../../lib/api'
 import { useToast } from '../../lib/toast'
+import { useAuth } from '../../lib/auth'
 import PageHeader from '../../components/PageHeader'
 import DataTable from '../../components/DataTable'
 import StatusBadge from '../../components/StatusBadge'
@@ -62,6 +63,11 @@ async function loadBranches(): Promise<Branch[]> {
 
 export default function DeveloperAccountsPage() {
   const toast = useToast()
+  const { session } = useAuth()
+  // A branch-scoped dev account (e.g. "dev1"/"dev2" on each offline branch
+  // server) only ever manages its own branch — mirrors the server-side scoping
+  // in app/api/v1/developer.py. branch_id === null means unscoped/global.
+  const scopeBranchId = session?.branch_id ?? null
   const [users, setUsers] = useState<DevUser[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
@@ -241,10 +247,14 @@ export default function DeveloperAccountsPage() {
           </label>
           <label className="block">
             <span className="text-xs font-medium text-slate-600">Branch</span>
-            <select className="input mt-1" value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })}>
-              <option value="">No branch</option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            {scopeBranchId !== null ? (
+              <div className="input mt-1 bg-slate-50 text-slate-500">{branches.find((b) => b.id === scopeBranchId)?.name || 'My Branch'}</div>
+            ) : (
+              <select className="input mt-1" value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })}>
+                <option value="">No branch</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            )}
           </label>
           <input className="input" placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <input className="input" placeholder="Employee code" value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
@@ -303,10 +313,14 @@ export default function DeveloperAccountsPage() {
           <select className="input" value={editUser.role} onChange={(e) => applyRoleDefaults(e.target.value, 'edit')}>
             {roles.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select className="input" value={editUser.branch_id ?? ''} onChange={(e) => setEditUser({ ...editUser, branch_id: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">No branch</option>
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          {scopeBranchId !== null ? (
+            <div className="input bg-slate-50 text-slate-500">{branches.find((b) => b.id === editUser.branch_id)?.name || 'My Branch'}</div>
+          ) : (
+            <select className="input" value={editUser.branch_id ?? ''} onChange={(e) => setEditUser({ ...editUser, branch_id: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">No branch</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={editUser.is_active} onChange={(e) => setEditUser({ ...editUser, is_active: e.target.checked })} />
             Active
