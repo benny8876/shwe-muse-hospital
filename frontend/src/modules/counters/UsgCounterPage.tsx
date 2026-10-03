@@ -71,6 +71,10 @@ export default function UsgCounterPage() {
   const [patient, setPatient] = useState<ActivePatient | null>(null)
   const [invoice, setInvoice] = useState<any>(null)
   const [usgItems, setUsgItems] = useState<any[]>([])
+  // Staged-then-confirm, same pattern as Pharmacy's Sale tab: clicking a scan
+  // only adds it to a local cart (no API call), and only "Confirm Order"
+  // actually posts it to the bill.
+  const [cart, setCart] = useState<{ cart_id: string; item: any }[]>([])
   const [orders, setOrders] = useState<RadiologyOrderRow[]>([])
   const [resultText, setResultText] = useState('')
   const [examType, setExamType] = useState('')
@@ -156,6 +160,13 @@ export default function UsgCounterPage() {
   const pendingOrders = orders.filter((o) => o.status !== 'completed')
   const currentOrderLines = (invoice?.lines || []).filter((l: any) => l.source === 'radiology')
 
+  // "Current Order" table = staged cart items (not billed yet) shown on top,
+  // followed by scans already ordered/billed to this invoice this visit.
+  const orderRows = [
+    ...cart.map((c) => ({ id: `cart-${c.cart_id}`, cart_id: c.cart_id as string | null, description: c.item.name, qty: 1, status: 'pending' as const })),
+    ...currentOrderLines.map((l: any) => ({ id: `line-${l.id}`, cart_id: null as string | null, description: l.description, qty: l.qty, status: 'ordered' as const })),
+  ]
+
   const patientsWithOrders = useMemo(() => {
     const seen = new Map<number, { patient_id: number; name: string; uhid: string }>()
     for (const o of orders) {
@@ -188,6 +199,7 @@ export default function UsgCounterPage() {
   function changePatient() {
     setPatient(null)
     setInvoice(null)
+    setCart([])
     setListQuery('')
   }
 
@@ -238,23 +250,38 @@ export default function UsgCounterPage() {
     setResultSearchResults([])
   }
 
-  async function orderScan(item: any) {
+  function addToCart(item: any) {
     if (!patient) {
       toast.error('လူနာ ရွေးပါ')
       return
     }
+    setCart((prev) => [...prev, { cart_id: `${item.id}-${Date.now()}-${Math.random()}`, item }])
+  }
+
+  function removeFromCart(cartId: string) {
+    setCart((prev) => prev.filter((c) => c.cart_id !== cartId))
+  }
+
+  async function confirmOrders() {
+    if (!patient) return toast.error('လူနာ ရွေးပါ')
+    if (cart.length === 0) return
     setBusy(true)
-    try {
-      const { data } = await api.post('/counter/usg', { branch_id: branchId, patient_id: patient.patient_id, item_id: item.id })
-      toast.success(`${data.item_name} ordered`)
-      const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId } })
-      setInvoice(fresh.data)
-      await Promise.all([loadActive(), loadOrders()])
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setBusy(false)
+    let failed = false
+    for (const line of cart) {
+      try {
+        await api.post('/counter/usg', { branch_id: branchId, patient_id: patient.patient_id, item_id: line.item.id })
+        setCart((prev) => prev.filter((c) => c.cart_id !== line.cart_id))
+      } catch (e) {
+        toast.error(`${line.item.name}: ${getApiError(e)}`)
+        failed = true
+        break
+      }
     }
+    if (!failed) toast.success('Order confirmed')
+    const fresh = await api.get(`/counter/patient/${patient.patient_id}/invoice`, { params: { branch_id: branchId } })
+    setInvoice(fresh.data)
+    await Promise.all([loadActive(), loadOrders()])
+    setBusy(false)
   }
 
   async function submitResult() {
@@ -501,7 +528,7 @@ export default function UsgCounterPage() {
                       ? 'border-slate-300 hover:border-[var(--brand-600)] hover:bg-[var(--brand-50)] cursor-pointer'
                       : 'border-slate-200 text-slate-400 cursor-not-allowed'
                   }`}
-                  onClick={() => orderScan(item)}
+                  onClick={() => addToCart(item)}
                 >
                   {item.name}
                 </button>
@@ -511,14 +538,24 @@ export default function UsgCounterPage() {
           </div>
 
           <div className="card space-y-3">
-            <h3 className="font-semibold text-slate-800">Current Order{patient ? ` — ${patient.name}` : ''}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold text-slate-800">Current Order{patient ? ` — ${patient.name}` : ''}</h3>
+              {cart.length > 0 && (
+                <button type="button" disabled={busy} className="btn btn-primary btn-sm" onClick={confirmOrders}>
+                  Confirm Order ({cart.length})
+                </button>
+              )}
+            </div>
             <DataTable
-              rows={currentOrderLines}
+              rows={orderRows}
               keyField="id"
               columns={[
                 { key: 'description', label: 'Scan', render: (r) => String(r.description) },
                 { key: 'qty', label: 'Qty', className: 'text-right', render: (r) => String(r.qty) },
-                { key: 'status', label: 'Status', render: () => <StatusBadge value="ORDERED" /> },
+                { key: 'status', label: 'Status', render: (r) => <StatusBadge value={r.status === 'pending' ? 'PENDING' : 'ORDERED'} /> },
+                { key: 'act', label: '', render: (r) => (
+                  r.cart_id ? <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => removeFromCart(r.cart_id!)}>Remove</button> : null
+                ) },
               ]}
               emptyText={patient ? 'Scan type နှိပ်ပြီး မှာပါ' : 'လူနာ ရွေးပြီးမှ USG order လုပ်နိုင်ပါမယ်'}
             />
