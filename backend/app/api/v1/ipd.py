@@ -13,7 +13,7 @@ from app.models.patients import Patient
 from app.models.users import User
 from app.schemas.actions import AdmitIn, DischargeIn, IpdDepositIn, NoteIn, TransferIn, VitalsIn
 from app.schemas.common import InvoiceOut
-from app.services.billing_service import add_line, collect_ipd_deposit, create_invoice, ensure_daily_room_charges, recalc_invoice
+from app.services.billing_service import collect_ipd_deposit, create_invoice, ensure_daily_room_charges, recalc_invoice
 from app.services.utils import audit
 
 router = APIRouter(prefix="/ipd", tags=["ipd"])
@@ -201,33 +201,6 @@ def add_deposit(
         .filter(Invoice.id == inv.id)
         .first()
     )
-    return inv
-
-
-@router.post("/admissions/{admission_id}/daily-charge")
-def daily_charge(
-    admission_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(require("ipd", "billing.create", "nursing")),
-):
-    adm = db.get(Admission, admission_id)
-    if not adm or not adm.bed_id:
-        raise HTTPException(404)
-    if adm.status not in ("admitted", "transferred"):
-        raise HTTPException(400, "Admission is not active")
-    bed = db.get(Bed, adm.bed_id)
-    inv = db.query(Invoice).filter(Invoice.admission_id == admission_id, Invoice.kind == "ipd").first()
-    if not inv:
-        inv = create_invoice(db, adm.branch_id, adm.patient_id, kind="ipd", doctor_id=adm.doctor_id)
-        inv.admission_id = admission_id
-    rate = bed.daily_rate if adm.billing_mode == "daily" else bed.hourly_rate if adm.billing_mode == "hourly" else bed.package_rate
-    label = f"Room charge {bed.code} ({adm.billing_mode})"
-    add_line(db, inv, None, 1, rate, "ipd_room", label)
-    if adm.billing_mode == "daily":
-        adm.last_room_charge_date = date.today()
-    audit(db, user.id, "ipd_daily_charge", "admission", str(admission_id), f"{label} rate={rate}")
-    db.commit()
-    db.refresh(inv)
     return inv
 
 

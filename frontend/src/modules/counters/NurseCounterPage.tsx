@@ -313,19 +313,6 @@ export default function NurseCounterPage() {
     }
   }
 
-  async function postRoomCharge() {
-    if (!selectedAdmission) return
-    setBusy(true)
-    try {
-      const { data } = await api.post(`/ipd/admissions/${selectedAdmission.id}/daily-charge`)
-      toast.success(`Room charge posted — balance ${data.balance}`)
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const selectedPatientName = stationTab === 'ipd'
     ? (selectedAdmission ? patients[selectedAdmission.patient_id]?.name : null)
     : selectedOpd?.name
@@ -431,7 +418,6 @@ export default function NurseCounterPage() {
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <button type="button" disabled={busy} className="btn btn-secondary btn-sm" onClick={postRoomCharge}>Post room charge</button>
                   <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setSelectedAdmission(null); clearOrderState() }}>Change patient</button>
                 </div>
               </div>

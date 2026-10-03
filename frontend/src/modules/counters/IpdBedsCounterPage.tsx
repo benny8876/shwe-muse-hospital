@@ -87,30 +87,6 @@ export default function IpdBedsCounterPage() {
     setDischargeSummary('')
   }, [detailBed?.id])
 
-  async function postRoomCharge(admissionId: number) {
-    setIpdActionBusy(true)
-    try {
-      const { data } = await api.post(`/ipd/admissions/${admissionId}/daily-charge`)
-      toast.success(`Room charge posted — balance ${formatMoney(data.balance)}`)
-      void loadDashboard()
-      if (detailBed?.admission) {
-        setDetailBed({
-          ...detailBed,
-          admission: {
-            ...detailBed.admission,
-            total: data.total,
-            balance: data.balance,
-            invoice_status: data.status,
-          },
-        })
-      }
-    } catch (e) {
-      toast.error(getApiError(e))
-    } finally {
-      setIpdActionBusy(false)
-    }
-  }
-
   async function dischargePatient(admissionId: number) {
     setIpdActionBusy(true)
     try {
@@ -261,16 +237,6 @@ export default function IpdBedsCounterPage() {
               <br />
               <strong>Discharge:</strong> ဆေးရုံဆင်းပြီး bed လွှတ်မယ် — ကျန်ငွေ <strong>Cashier</strong>။ OPD follow-up → Reception <strong>Convert</strong> (discharge မဟုတ်)။
             </Alert>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={ipdActionBusy}
-                className="btn btn-secondary btn-sm"
-                onClick={() => postRoomCharge(detailBed.admission!.admission_id)}
-              >
-                Post room charge ({detailBed.admission.billing_mode})
-              </button>
-            </div>
             <textarea
               className="input min-h-20"
               placeholder="Discharge summary (optional)"

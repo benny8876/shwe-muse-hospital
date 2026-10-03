@@ -201,7 +201,7 @@ def test_nurse_can_order_medicine_for_ward_patient_and_pharmacy_can_dispense(cli
     assert r.status_code == 404
 
 
-def test_ipd_daily_charge_and_discharge(client, auth_headers, reception_headers, admin_headers, doctor_id):
+def test_ipd_discharge_flow(client, auth_headers, reception_headers, admin_headers, doctor_id):
     nurse_headers = auth_headers("nurse")
     bed_id = _available_bed_id(client, admin_headers)
 
@@ -224,7 +224,10 @@ def test_ipd_daily_charge_and_discharge(client, auth_headers, reception_headers,
     admission_id = r.json()["admission_id"]
     patient_id = r.json()["patient"]["id"]
 
-    r = client.post(f"/api/v1/ipd/admissions/{admission_id}/daily-charge", headers=nurse_headers)
+    # Admission itself posts the first room charge — no manual "Post room
+    # charge" click needed (see test_ipd_dashboard_auto_posts_missed_room_charges
+    # for the day-to-day auto-accrual as calendar days pass).
+    r = client.get(f"/api/v1/counter/patient/{patient_id}/invoice", params={"branch_id": 1}, headers=nurse_headers)
     assert r.status_code == 200
     assert r.json()["total"] > 0
 
@@ -252,9 +255,6 @@ def test_ipd_daily_charge_and_discharge(client, auth_headers, reception_headers,
 
     r = client.get("/api/v1/ipd/admissions", params={"branch_id": 1, "status": "admitted"}, headers=nurse_headers)
     assert all(a["id"] != admission_id for a in r.json())
-
-    r = client.post(f"/api/v1/ipd/admissions/{admission_id}/daily-charge", headers=nurse_headers)
-    assert r.status_code == 400
 
 
 def test_ipd_dashboard_auto_posts_missed_room_charges(client, reception_headers, admin_headers, doctor_id):
