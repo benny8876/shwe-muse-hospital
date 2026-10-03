@@ -398,3 +398,80 @@ def test_open_invoices_lists_ipd_with_zero_balance_while_admitted(client, auth_h
     assert r.status_code == 200
     ids = [inv["patient_id"] for inv in r.json()]
     assert patient_id in ids
+
+
+def _two_available_bed_ids(client, admin_headers) -> tuple[int, int]:
+    r = client.get("/api/v1/ipd/beds", headers=admin_headers)
+    r.raise_for_status()
+    available = [bed["id"] for bed in r.json() if bed["status"] == "available"]
+    if len(available) < 2:
+        raise AssertionError("seed() should have created at least two available beds")
+    return available[0], available[1]
+
+
+def test_ipd_transfer_logs_history_and_discharge_records_type(client, reception_headers, admin_headers, auth_headers, doctor_id):
+    nurse_headers = auth_headers("nurse")
+    bed_a, bed_b = _two_available_bed_ids(client, admin_headers)
+
+    r = client.post(
+        "/api/v1/counter/reception",
+        json={
+            "branch_id": 1,
+            "doctor_id": doctor_id,
+            "name": "Transfer Flow Patient",
+            "phone": "09-000-555",
+            "gender": "F",
+            "patient_type": "ipd",
+            "bed_id": bed_a,
+            "deposit": 0,
+            "billing_mode": "daily",
+        },
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+    admission_id = r.json()["admission_id"]
+
+    # Admit alone already logs one history row (the initial bed assignment).
+    r = client.get(f"/api/v1/ipd/admissions/{admission_id}/transfers", headers=nurse_headers)
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+    assert r.json()[0]["from_bed"] is None
+
+    r = client.post(
+        f"/api/v1/ipd/admissions/{admission_id}/transfer",
+        json={"bed_id": bed_b, "reason": "Needs closer monitoring"},
+        headers=nurse_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["bed_id"] == bed_b
+    assert r.json()["status"] == "transferred"
+
+    r = client.get("/api/v1/ipd/beds", headers=admin_headers)
+    beds_by_id = {b["id"]: b for b in r.json()}
+    assert beds_by_id[bed_a]["status"] == "available"  # released on transfer
+    assert beds_by_id[bed_b]["status"] == "occupied"
+
+    r = client.get(f"/api/v1/ipd/admissions/{admission_id}/transfers", headers=nurse_headers)
+    rows = r.json()
+    assert len(rows) == 2
+    assert rows[1]["from_bed"] is not None and rows[1]["to_bed"] is not None
+    assert rows[1]["reason"] == "Needs closer monitoring"
+    assert rows[1]["transferred_by"]  # nurse's full name, not blank
+
+    r = client.post(
+        f"/api/v1/ipd/admissions/{admission_id}/discharge",
+        json={"summary": "LAMA against advice", "discharge_type": "lama"},
+        headers=reception_headers,
+    )
+    assert r.status_code == 200
+
+    db = SessionLocal()
+    try:
+        adm = db.get(Admission, admission_id)
+        assert adm.discharge_type == "lama"
+    finally:
+        db.close()
+
+    r = client.get("/api/v1/ipd/beds", headers=admin_headers)
+    beds_by_id = {b["id"]: b for b in r.json()}
+    assert beds_by_id[bed_b]["status"] == "available"

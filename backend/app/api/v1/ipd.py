@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.ancillary import LabOrder, RadiologyOrder
 from app.models.billing import Invoice
 from app.models.catalog import CatalogItem
-from app.models.ipd import Admission, Bed, NursingNote, VitalSign, Ward
+from app.models.ipd import Admission, Bed, BedTransferLog, NursingNote, VitalSign, Ward
 from app.models.patients import Patient
 from app.models.users import User
 from app.schemas.actions import AdmitIn, DischargeIn, IpdDepositIn, NoteIn, TransferIn, VitalsIn
@@ -129,7 +129,7 @@ def beds(ward_id: int | None = None, db: Session = Depends(get_db), _: User = De
 
 
 @router.post("/admit")
-def admit(data: AdmitIn, db: Session = Depends(get_db), _: User = Depends(require("ipd"))):
+def admit(data: AdmitIn, db: Session = Depends(get_db), user: User = Depends(require("ipd"))):
     bed = db.get(Bed, data.bed_id)
     if not bed or bed.status != "available":
         raise HTTPException(400, "Bed not available")
@@ -144,6 +144,8 @@ def admit(data: AdmitIn, db: Session = Depends(get_db), _: User = Depends(requir
         last_room_charge_date=date.today(),
     )
     db.add(adm)
+    db.flush()
+    db.add(BedTransferLog(admission_id=adm.id, from_bed_id=None, to_bed_id=bed.id, from_ward_id=None, to_ward_id=bed.ward_id, transferred_by=user.id))
     inv = create_invoice(db, data.branch_id, data.patient_id, kind="ipd", doctor_id=data.doctor_id)
     inv.admission_id = adm.id
     db.flush()
@@ -157,20 +159,58 @@ def admit(data: AdmitIn, db: Session = Depends(get_db), _: User = Depends(requir
 
 
 @router.post("/admissions/{admission_id}/transfer")
-def transfer(admission_id: int, data: TransferIn, db: Session = Depends(get_db), _: User = Depends(require("ipd"))):
+def transfer(admission_id: int, data: TransferIn, db: Session = Depends(get_db), user: User = Depends(require("ipd"))):
     adm = db.get(Admission, admission_id)
     new_bed = db.get(Bed, data.bed_id)
     if not adm or not new_bed or new_bed.status != "available":
         raise HTTPException(400)
+    old_bed_id = adm.bed_id
+    old_ward_id = None
     if adm.bed_id:
         old = db.get(Bed, adm.bed_id)
         if old:
             old.status = "available"
+            old_ward_id = old.ward_id
     new_bed.status = "occupied"
     adm.bed_id = data.bed_id
     adm.status = "transferred"
+    db.add(BedTransferLog(
+        admission_id=admission_id,
+        from_bed_id=old_bed_id,
+        to_bed_id=new_bed.id,
+        from_ward_id=old_ward_id,
+        to_ward_id=new_bed.ward_id,
+        reason=data.reason,
+        transferred_by=user.id,
+    ))
+    audit(db, user.id, "ipd_transfer", "admission", str(admission_id), f"bed {old_bed_id} -> {new_bed.id}")
     db.commit()
-    return adm
+    return {"admission_id": adm.id, "bed_id": adm.bed_id, "status": adm.status}
+
+
+@router.get("/admissions/{admission_id}/transfers")
+def list_transfers(admission_id: int, db: Session = Depends(get_db), _: User = Depends(require("ipd", "ipd.read", "nursing"))):
+    rows = (
+        db.query(BedTransferLog)
+        .filter(BedTransferLog.admission_id == admission_id)
+        .order_by(BedTransferLog.transferred_at)
+        .all()
+    )
+    bed_ids = {r.from_bed_id for r in rows if r.from_bed_id} | {r.to_bed_id for r in rows}
+    beds_by_id = {b.id: b for b in db.query(Bed).filter(Bed.id.in_(bed_ids))} if bed_ids else {}
+    user_ids = {r.transferred_by for r in rows if r.transferred_by}
+    names_by_id = {u.id: u.full_name for u in db.query(User).filter(User.id.in_(user_ids))} if user_ids else {}
+    return [
+        {
+            "id": r.id,
+            "from_bed": beds_by_id[r.from_bed_id].code if r.from_bed_id and r.from_bed_id in beds_by_id else None,
+            "to_bed": beds_by_id[r.to_bed_id].code if r.to_bed_id in beds_by_id else None,
+            "reason": r.reason,
+            "transferred_by": names_by_id.get(r.transferred_by, ""),
+            "transferred_at": r.transferred_at.isoformat() if r.transferred_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/admissions/{admission_id}/deposit", response_model=InvoiceOut)
@@ -220,6 +260,7 @@ def discharge(
     adm.status = "discharged"
     adm.discharged_at = datetime.utcnow()
     adm.discharge_summary = data.summary or ""
+    adm.discharge_type = data.discharge_type or "routine"
     if adm.bed_id:
         bed = db.get(Bed, adm.bed_id)
         if bed:

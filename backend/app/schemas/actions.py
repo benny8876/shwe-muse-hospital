@@ -26,6 +26,7 @@ class NoteIn(BaseModel):
 
 class DischargeIn(BaseModel):
     summary: str = ""
+    discharge_type: str = "routine"  # routine | lama | dama | transfer_out | death
 
 
 class IpdDepositIn(BaseModel):
@@ -35,6 +36,7 @@ class IpdDepositIn(BaseModel):
 
 class TransferIn(BaseModel):
     bed_id: int
+    reason: str = ""
 
 
 class RadiologyOrderIn(BaseModel):

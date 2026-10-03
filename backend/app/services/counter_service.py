@@ -8,7 +8,7 @@ from app.models.ancillary import LabOrder, RadiologyOrder
 from app.models.billing import Invoice, InvoiceLine, Payment
 from app.models.catalog import CatalogItem, LabTestReagent
 from app.models.clinical import QueueToken, Visit
-from app.models.ipd import Admission, Bed, Ward, WardMedOrder
+from app.models.ipd import Admission, Bed, BedTransferLog, Ward, WardMedOrder
 from app.models.org import Branch, Warehouse
 from app.models.patients import Patient
 from app.models.users import User
@@ -257,6 +257,7 @@ def _register_ipd(
     )
     db.add(adm)
     db.flush()
+    db.add(BedTransferLog(admission_id=adm.id, from_bed_id=None, to_bed_id=bed.id, from_ward_id=None, to_ward_id=bed.ward_id, transferred_by=user_id))
 
     inv = get_open_invoice(db, patient.id, branch_id, kind="ipd")
     if not inv:

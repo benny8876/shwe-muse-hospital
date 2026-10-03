@@ -63,7 +63,12 @@ export default function IpdBedsCounterPage() {
   const [viewingLabOrderId, setViewingLabOrderId] = useState<number | null>(null)
   const [viewingRadiologyOrderId, setViewingRadiologyOrderId] = useState<number | null>(null)
   const [dischargeSummary, setDischargeSummary] = useState('')
+  const [dischargeType, setDischargeType] = useState('routine')
   const [ipdActionBusy, setIpdActionBusy] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferBedId, setTransferBedId] = useState('')
+  const [transferReason, setTransferReason] = useState('')
+  const [transferHistory, setTransferHistory] = useState<{ id: number; from_bed: string | null; to_bed: string; reason: string; transferred_by: string; transferred_at: string | null }[]>([])
 
   const loadDashboard = useCallback(async () => {
     setWardsLoading(true)
@@ -85,12 +90,23 @@ export default function IpdBedsCounterPage() {
 
   useEffect(() => {
     setDischargeSummary('')
+    setDischargeType('routine')
+    setTransferOpen(false)
+    setTransferBedId('')
+    setTransferReason('')
+    setTransferHistory([])
+    if (detailBed?.admission) {
+      api.get(`/ipd/admissions/${detailBed.admission.admission_id}/transfers`)
+        .then((r) => setTransferHistory(r.data))
+        .catch((e) => toast.error(getApiError(e)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailBed?.id])
 
   async function dischargePatient(admissionId: number) {
     setIpdActionBusy(true)
     try {
-      const { data } = await api.post(`/ipd/admissions/${admissionId}/discharge`, { summary: dischargeSummary })
+      const { data } = await api.post(`/ipd/admissions/${admissionId}/discharge`, { summary: dischargeSummary, discharge_type: dischargeType })
       const inv = data.invoice
       toast.success(
         inv
@@ -106,6 +122,28 @@ export default function IpdBedsCounterPage() {
       setIpdActionBusy(false)
     }
   }
+
+  async function transferPatient(admissionId: number) {
+    if (!transferBedId) return toast.error('Bed ကို ရွေးပါ')
+    setIpdActionBusy(true)
+    try {
+      await api.post(`/ipd/admissions/${admissionId}/transfer`, { bed_id: Number(transferBedId), reason: transferReason })
+      toast.success('Patient transferred')
+      setDetailBed(null)
+      setTransferOpen(false)
+      setTransferBedId('')
+      setTransferReason('')
+      void loadDashboard()
+    } catch (e) {
+      toast.error(getApiError(e))
+    } finally {
+      setIpdActionBusy(false)
+    }
+  }
+
+  const availableBeds = wards.flatMap((w) =>
+    w.beds.filter((b) => b.status === 'available').map((b) => ({ id: b.id, label: `${w.ward.name} — ${b.code}` })),
+  )
 
   return (
     <div className="space-y-4">
@@ -232,11 +270,55 @@ export default function IpdBedsCounterPage() {
             })()}
             {detailBed.admission.lines.length === 0 && <div className="text-slate-400">No charges yet</div>}
 
+            {transferHistory.length > 0 && (
+              <div>
+                <div className="font-medium text-slate-700 mb-1">Bed/Ward History</div>
+                <div className="space-y-1 text-xs text-slate-600">
+                  {transferHistory.map((t) => (
+                    <div key={t.id} className="flex justify-between border-b border-slate-100 pb-1">
+                      <span>{t.from_bed ? `${t.from_bed} → ${t.to_bed}` : `Admitted → ${t.to_bed}`}{t.reason ? ` (${t.reason})` : ''}</span>
+                      <span className="text-slate-400 shrink-0 ml-2">{t.transferred_at ? formatDate(t.transferred_at) : ''}{t.transferred_by ? ` · ${t.transferred_by}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <Alert tone="info">
               <strong>Orders:</strong> ဆေး → <strong>Nurse</strong> counter · Lab / X-ray / USG → သက်ဆိုင်ရာ counter (open IPD bill)။
               <br />
               <strong>Discharge:</strong> ဆေးရုံဆင်းပြီး bed လွှတ်မယ် — ကျန်ငွေ <strong>Cashier</strong>။ OPD follow-up → Reception <strong>Convert</strong> (discharge မဟုတ်)။
             </Alert>
+
+            {transferOpen ? (
+              <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+                <div className="font-medium text-slate-700">Transfer to another bed</div>
+                <select className="input" value={transferBedId} onChange={(e) => setTransferBedId(e.target.value)}>
+                  <option value="">Select bed...</option>
+                  {availableBeds.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+                </select>
+                <input className="input" placeholder="Reason (optional)" value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />
+                <div className="flex gap-2">
+                  <button type="button" disabled={ipdActionBusy} className="btn btn-primary flex-1" onClick={() => transferPatient(detailBed.admission!.admission_id)}>Confirm Transfer</button>
+                  <button type="button" className="btn btn-secondary flex-1" onClick={() => setTransferOpen(false)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="btn btn-secondary w-full" onClick={() => setTransferOpen(true)}>
+                Transfer to another bed
+              </button>
+            )}
+
+            <label className="block">
+              <span className="text-xs font-medium text-slate-600">Discharge type</span>
+              <select className="input mt-1" value={dischargeType} onChange={(e) => setDischargeType(e.target.value)}>
+                <option value="routine">Routine</option>
+                <option value="lama">LAMA (Left Against Medical Advice)</option>
+                <option value="dama">DAMA (Discharged Against Medical Advice)</option>
+                <option value="transfer_out">Transfer to another hospital</option>
+                <option value="death">Death</option>
+              </select>
+            </label>
             <textarea
               className="input min-h-20"
               placeholder="Discharge summary (optional)"

@@ -72,6 +72,9 @@ def _ensure_schema() -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE admissions ADD COLUMN last_room_charge_date DATE"))
             admissions_needed_backfill = True
+        if "discharge_type" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE admissions ADD COLUMN discharge_type VARCHAR(20) DEFAULT ''"))
 
     # Indexes added to models after their tables already shipped — CREATE
     # INDEX IF NOT EXISTS is idempotent (unlike ADD COLUMN) so this can just

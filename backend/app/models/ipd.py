@@ -45,11 +45,31 @@ class Admission(Base):
     billing_mode: Mapped[str] = mapped_column(String(20), default="daily")  # daily hourly package
     diagnosis: Mapped[str] = mapped_column(Text, default="")
     discharge_summary: Mapped[str] = mapped_column(Text, default="")
+    discharge_type: Mapped[str] = mapped_column(String(20), default="")  # routine lama dama transfer_out death
     last_room_charge_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     patient = relationship("Patient")
     bed = relationship("Bed")
     doctor = relationship("User")
+
+
+class BedTransferLog(Base):
+    """One row per bed assignment an admission has ever had — the initial
+    admit and every subsequent transfer — so "which bed was this patient in,
+    and when" survives Admission.bed_id simply being overwritten on transfer.
+    Lets a disputed room charge or an ICU-utilization report be answered
+    after the fact instead of only reflecting the current bed."""
+    __tablename__ = "bed_transfer_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    admission_id: Mapped[int] = mapped_column(ForeignKey("admissions.id"), index=True)
+    from_bed_id: Mapped[int | None] = mapped_column(ForeignKey("beds.id"), nullable=True)
+    to_bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id"))
+    from_ward_id: Mapped[int | None] = mapped_column(ForeignKey("wards.id"), nullable=True)
+    to_ward_id: Mapped[int] = mapped_column(ForeignKey("wards.id"))
+    reason: Mapped[str] = mapped_column(String(200), default="")
+    transferred_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    transferred_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class NursingNote(Base):
