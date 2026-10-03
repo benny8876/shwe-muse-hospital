@@ -53,6 +53,25 @@ function OwnerOnly({ children }: { children: React.ReactNode }) {
   return children
 }
 
+// Staff Accounts is branch-local account management — it belongs on each
+// branch's own offline admin (branch_admin), not the cloud-hosted Owner
+// account, which won't have an easy way to create accounts against a branch's
+// offline database once the two run as separate deployments (see
+// docs/cloud-admin-deploy.md). super_admin/hospital_admin still have
+// Developer Panel (/dev/accounts) to bootstrap the first branch_admin account
+// on each branch.
+function StaffAccountsOnly({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth()
+  if (!session) return <Navigate to="/login" replace />
+  if (session.role !== 'branch_admin') return <Navigate to="/admin/owner" replace />
+  return children
+}
+
+function AdminIndexRedirect() {
+  const { session } = useAuth()
+  return <Navigate to={session?.role === 'branch_admin' ? '/admin/staff' : '/admin/owner'} replace />
+}
+
 function DevOnly({ children }: { children: React.ReactNode }) {
   const { session } = useAuth()
   if (!session) return <Navigate to="/login" replace />
@@ -181,9 +200,9 @@ export default function App() {
         <Route index element={<Navigate to="/dev/accounts" replace />} />
       </Route>
       <Route path="/admin" element={<AdminOnly><AdminLayout /></AdminOnly>}>
-        <Route path="staff" element={<AdminStaffPage />} />
+        <Route path="staff" element={<StaffAccountsOnly><AdminStaffPage /></StaffAccountsOnly>} />
         <Route path="owner" element={<OwnerOnly><OwnerPanelPage /></OwnerOnly>} />
-        <Route index element={<Navigate to="/admin/staff" replace />} />
+        <Route index element={<AdminIndexRedirect />} />
       </Route>
       <Route path="/app/*" element={<Navigate to="/counter/reception" replace />} />
       <Route path="/pos/*" element={<Navigate to="/counter/cashier" replace />} />

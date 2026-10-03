@@ -11,9 +11,13 @@ export default function AdminLayout() {
   const { session, logout } = useAuth()
   const { pathname } = useLocation()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  // branch_admin is scoped to its own branch's Staff Accounts only — Owner Panel
-  // (cross-branch income/stock/CAPEX) stays owner-only (super_admin/hospital_admin).
-  const visibleLinks = session?.role === 'branch_admin' ? links.filter((l) => l.to !== '/admin/owner') : links
+  // Staff Accounts is branch-local (branch_admin only) and Owner Panel is
+  // cross-branch reporting (super_admin/hospital_admin only) — each role only
+  // ever sees its own one link, not both (see App.tsx's StaffAccountsOnly /
+  // OwnerOnly route guards for the matching server-side-of-the-router split).
+  const visibleLinks = session?.role === 'branch_admin'
+    ? links.filter((l) => l.to === '/admin/staff')
+    : links.filter((l) => l.to === '/admin/owner')
   const activeLabel = visibleLinks.find((l) => pathname.startsWith(l.to))?.label
 
   return (

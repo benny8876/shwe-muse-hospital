@@ -59,7 +59,7 @@ export default function CounterLayout() {
             </Link>
           )}
           {(role === 'super_admin' || role === 'hospital_admin' || role === 'branch_admin') && (
-            <Link to="/admin/staff" className="btn-outline-light w-full flex items-center justify-center gap-1.5 overflow-hidden">
+            <Link to={role === 'branch_admin' ? '/admin/staff' : '/admin/owner'} className="btn-outline-light w-full flex items-center justify-center gap-1.5 overflow-hidden">
               <span className="shrink-0"><IconAdmin size={16} /></span>
               <span className="max-w-0 group-hover:max-w-[160px] overflow-hidden transition-[max-width] duration-200 whitespace-nowrap">Admin Panel</span>
             </Link>
